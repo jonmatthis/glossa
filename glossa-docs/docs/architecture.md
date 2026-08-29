@@ -11,31 +11,41 @@ sensitive and durable**: API keys, settings, the observer documents, and all
 LLM/STT network calls. The frontend is pure UI + state over a small IPC
 surface.
 
-```
-┌───────────────────────────── Webview (React + TS) ─────────────────────────────┐
-│  App.tsx (topbar, tabs, settings modal)                                        │
-│  ├─ GuidedPage.tsx    chat stream · assist dial · composer · breakdown pane    │
-│  │                    · plan/profile drawer · mic recorder                     │
-│  └─ StoriesPage.tsx   level chips · story canvas · tap-for-gloss popup         │
-│  lib/tauri.ts (typed IPC wrapper) · lib/log.ts · lib/token-spacing.ts          │
-└───────────────▲─────────────────────────────────────────┬──────────────────────┘
-                │ Channel<GuidedEvent> (streamed events)  │ invoke() commands
-┌───────────────┴─────────────────────────────────────────▼──────────────────────┐
-│                              Rust core (src-tauri)                             │
-│  commands.rs  — IPC surface: get/save_settings, guided_turn, generate_story,   │
-│                 transcribe_audio, get_plan                                     │
-│  lib.rs       — AppState { settings, plan, profile, recent_mechics,            │
-│                 observer_running }, logging plugin, config dir setup           │
-│  ai.rs        — Provider: SSE streaming + structured_validated fallback ladder │
-│  observer.rs  — TeachingPlan + Profile documents, observer pass, directives    │
-│  prompts.rs   — shared persona/rules blocks, per-surface prompts               │
-│  languages.rs — 10 target / 9 native languages, per-variant prompt overlays    │
-│  settings.rs  — settings.json persistence                                      │
-└───────────────┬──────────────────────────────┬─────────────────────────────────┘
-                │ HTTPS                        │ read/write JSON
-                ▼                              ▼
-   OpenRouter (chat completions)      OS config dir: settings.json,
-   Groq Whisper (STT)                 plan.json, profile.json
+```mermaid
+flowchart TB
+    subgraph WEB["Webview — React 19 + Vite + TS (src/)"]
+        direction TB
+        APP["App.tsx — topbar · tabs · settings modal"]
+        GUIDED["GuidedPage.tsx — chat stream · assist dial · composer<br/>breakdown pane · plan/profile drawer · mic"]
+        STORIES["StoriesPage.tsx — level chips · story canvas · tap-for-gloss"]
+        LIB["lib/ — tauri.ts (typed IPC wrapper) · log.ts · token-spacing.ts"]
+        APP --> GUIDED
+        APP --> STORIES
+        GUIDED --> LIB
+        STORIES --> LIB
+    end
+
+    subgraph CORE["Rust core (src-tauri)"]
+        direction TB
+        CMD["commands.rs — IPC surface: get/save_settings · guided_turn<br/>generate_story · transcribe_audio · get_plan"]
+        STATE["lib.rs — AppState: settings · plan · profile ·<br/>recent_mechanics · observer_running"]
+        AI["ai.rs — Provider: SSE streaming + structured_validated ladder"]
+        OBS["observer.rs — TeachingPlan + Profile · observer pass · directives_block"]
+        SUP["prompts.rs · languages.rs · settings.rs"]
+        CMD --> AI
+        CMD --> OBS
+        AI --> OBS
+        SUP --> CMD
+        STATE --> CMD
+    end
+
+    NET["OpenRouter (chat completions) · Groq Whisper (STT)"]
+    DISK[("OS config dir — settings.json · plan.json · profile.json")]
+
+    LIB -->|"invoke() commands"| CMD
+    CMD -.->|"Channel GuidedEvent (streamed events)"| LIB
+    AI -->|"HTTPS"| NET
+    CMD -->|"read/write JSON"| DISK
 ```
 
 ## Module map (with sizes)
@@ -95,7 +105,7 @@ sequenceDiagram
     R-->>FE: reply_delta ×n
     R-->>C: full reply
     C->>C: sanitize_reply (strip fences / leaked notes)
-    C-->>FE: return reply (command resolves; FE unlocks)
+    C-->>FE: return reply (command resolves — FE unlocks)
     par background
         C->>A: tokens (t=0.1) · translation (t=0.2) · mechanics (t=0.4) · scaffolds (t=0.6)
         A-->>FE: analysis_done (GuidedTurnResult) | analysis_failed

@@ -12,7 +12,7 @@ const config: SkellyDocsConfig = {
       url: 'https://freemocap.org',
     },
     ctaButtons: [
-      { label: 'Get Started', to: '/docs/intro', variant: 'primary' },
+      { label: 'Get Started', to: '/docs/overview', variant: 'primary' },
       { label: 'View on GitHub', to: 'https://github.com/jonmatthis/glossa', variant: 'secondary' },
     ],
   },
@@ -30,7 +30,7 @@ const config: SkellyDocsConfig = {
         </>
       ),
       issues: [],
-      docPath: 'intro',
+      docPath: 'overview',
     },
     {
       id: 'cli-scaffolder',
@@ -44,7 +44,7 @@ const config: SkellyDocsConfig = {
         </>
       ),
       issues: [],
-      docPath: 'intro',
+      docPath: 'overview',
     },
     {
       id: 'design-tokens',
@@ -58,7 +58,7 @@ const config: SkellyDocsConfig = {
         </>
       ),
       issues: [],
-      docPath: 'intro',
+      docPath: 'overview',
     },
   ],
 

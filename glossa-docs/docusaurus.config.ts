@@ -91,7 +91,7 @@ const config: Config = {
       links: [
         {
           title: 'Documentation',
-          items: [{ label: 'Getting Started', to: '/docs/intro' }],
+          items: [{ label: 'Getting Started', to: '/docs/overview' }],
         },
         {
           title: 'Community',

@@ -22,9 +22,7 @@ keeps two small documents (a session **Teaching Plan** and a cross-session
 **Profile**) that steer the fast tutor model: what to practice, which errors
 to gently recast, what not to re-teach.
 
-The design lineage is FreeLingo / Habla·ES: a two-layer reading experience
-("paper" conversation pane + dark "breakdown" pane with word glosses, grammar
-cards, and reply scaffolds), ported into a native desktop shell.
+
 
 ## The two surfaces
 
@@ -67,16 +65,8 @@ Every turn triggers up to three kinds of LLM work, all OpenRouter
 Full detail in [Architecture](./architecture); the data contracts are nailed
 down in [Ontology](./ontology).
 
-## Non-goals (as of v0.1.0)
 
-- No accounts, no sync, no server component.
-- No SRS/flashcard system, no streaks, no gamification.
-- No conversation persistence across restarts (plan/profile persist; the chat
-  itself does not — yet).
-- One target language per install (switchable in Settings, but no multi-learner
-  or multi-language profiles).
-- Cloud provider only; local model support (Ollama is already anticipated in
-  the AI client's schema handling) is not wired up.
+
 
 ## Document map
 
