@@ -182,4 +182,4 @@ recorded_objects.npy
 node_modules/
 .docusaurus/
 
-*build/*
+*/build/*
