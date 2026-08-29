@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[7632],{7632:(s,e,a)=>{a.d(e,{createWardleyServices:()=>c.J});var c=a(9427);a(4954)}}]);

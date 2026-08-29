@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[1730],{4466:s=>{s.exports=JSON.parse('{"metadata":{"permalink":"/glossa/blog","page":1,"postsPerPage":10,"totalPages":1,"totalCount":1,"blogDescription":"Blog","blogTitle":"Blog"}}')}}]);

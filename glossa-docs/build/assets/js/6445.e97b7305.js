@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[6445],{6445:(s,e,c)=>{c.d(e,{createInfoServices:()=>a.v});var a=c(4614);c(4954)}}]);

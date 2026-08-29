@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[1903],{1912:s=>{s.exports=JSON.parse('{"blogBasePath":"/glossa/blog","blogTitle":"Blog","authorsListPath":"/glossa/blog/authors"}')}}]);

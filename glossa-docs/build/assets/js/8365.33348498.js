@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[8365],{8365:(s,e,a)=>{a.d(e,{createRadarServices:()=>c.f});var c=a(5552);a(4954)}}]);

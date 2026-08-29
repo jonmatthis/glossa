@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[7472],{5513:s=>{s.exports=JSON.parse('{"title":"Recent posts","items":[{"title":"Welcome to glossa","permalink":"/glossa/blog/welcome","unlisted":false,"date":"2026-08-29T00:00:00.000Z"}]}')}}]);

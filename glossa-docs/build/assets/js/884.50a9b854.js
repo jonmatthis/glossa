@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[884],{884:(s,e,a)=>{a.d(e,{createTreemapServices:()=>c.d});var c=a(6527);a(4954)}}]);

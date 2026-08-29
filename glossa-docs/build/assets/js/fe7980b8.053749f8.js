@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkglossa_docs=self.webpackChunkglossa_docs||[]).push([[5030],{3140:s=>{s.exports=JSON.parse('{"tags":[{"label":"welcome","permalink":"/glossa/blog/tags/welcome","count":1}]}')}}]);
