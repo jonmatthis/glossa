@@ -1,0 +1,28 @@
+{
+  "id": "ontology",
+  "title": "Ontology",
+  "description": "This is the single source of truth for Glossa's data contracts as of v0.1.0.",
+  "source": "@site/docs/ontology.md",
+  "sourceDirName": ".",
+  "slug": "/ontology",
+  "permalink": "/glossa/docs/ontology",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/jonmatthis/glossa/tree/main/glossa-docs/docs/ontology.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 4,
+  "frontMatter": {
+    "sidebar_position": 4,
+    "title": "Ontology"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "AI Generated Banner",
+    "permalink": "/glossa/docs/ai-generated-banner"
+  },
+  "next": {
+    "title": "Status",
+    "permalink": "/glossa/docs/status"
+  }
+}

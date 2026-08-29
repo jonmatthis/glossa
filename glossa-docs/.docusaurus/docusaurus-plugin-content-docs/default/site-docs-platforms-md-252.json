@@ -1,0 +1,24 @@
+{
+  "id": "platforms",
+  "title": "Platforms & Build",
+  "description": "Current reality: Windows desktop dev + NSIS installer works. Everything",
+  "source": "@site/docs/platforms.md",
+  "sourceDirName": ".",
+  "slug": "/platforms",
+  "permalink": "/glossa/docs/platforms",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/jonmatthis/glossa/tree/main/glossa-docs/docs/platforms.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 6,
+  "frontMatter": {
+    "sidebar_position": 6,
+    "title": "Platforms & Build"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Status",
+    "permalink": "/glossa/docs/status"
+  }
+}

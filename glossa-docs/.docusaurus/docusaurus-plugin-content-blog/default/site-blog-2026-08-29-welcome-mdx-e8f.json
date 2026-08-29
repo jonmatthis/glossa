@@ -1,0 +1,28 @@
+{
+  "permalink": "/glossa/blog/welcome",
+  "editUrl": "https://github.com/jonmatthis/glossa/tree/main/glossa-docs/blog/2026-08-29_welcome.mdx",
+  "source": "@site/blog/2026-08-29_welcome.mdx",
+  "title": "Welcome to glossa",
+  "description": "Welcome to the glossa blog!",
+  "date": "2026-08-29T00:00:00.000Z",
+  "tags": [
+    {
+      "inline": true,
+      "label": "welcome",
+      "permalink": "/glossa/blog/tags/welcome"
+    }
+  ],
+  "readingTime": 0.21,
+  "hasTruncateMarker": true,
+  "authors": [],
+  "frontMatter": {
+    "slug": "welcome",
+    "title": "Welcome to glossa",
+    "authors": [],
+    "tags": [
+      "welcome"
+    ],
+    "date": "2026-08-29T00:00:00.000Z"
+  },
+  "unlisted": false
+}

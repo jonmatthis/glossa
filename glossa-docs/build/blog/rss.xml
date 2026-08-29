@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><?xml-stylesheet type="text/xsl" href="rss.xsl"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+    <channel>
+        <title>glossa Blog</title>
+        <link>https://github.com/glossa/blog</link>
+        <description>glossa Blog</description>
+        <lastBuildDate>Sat, 29 Aug 2026 00:00:00 GMT</lastBuildDate>
+        <docs>https://validator.w3.org/feed/docs/rss2.html</docs>
+        <generator>https://github.com/jpmonette/feed</generator>
+        <language>en</language>
+        <item>
+            <title><![CDATA[Welcome to glossa]]></title>
+            <link>https://github.com/glossa/blog/welcome</link>
+            <guid>https://github.com/glossa/blog/welcome</guid>
+            <pubDate>Sat, 29 Aug 2026 00:00:00 GMT</pubDate>
+            <description><![CDATA[Welcome to the glossa blog!]]></description>
+            <content:encoded><![CDATA[<details class="aiBanner_kPGx"><summary class="aiBannerSummary_dQuX"><span class="aiBannerIcon_t1uN">🤖</span><span>AI-generated documentation</span><span class="aiBannerCuratedEmpty_DPZE">☐<!-- --> curated</span><span class="aiBannerTypeBadge_cxZM">AI Generated</span></summary><div class="aiBannerBody_BH44"><span>This page was drafted by an AI assistant and may contain inaccuracies.</span><details class="aiBannerTypeOverview_ZGVC"><summary class="aiBannerTypeOverviewSummary_mRuh">About content generation types</summary><div class="aiBannerTypeList_MCdR"><div class="aiBannerTypeRow_BfjY aiBannerTypeRowActive_QJGM"><span class="aiBannerTypeRowIcon_oIKi">🤖</span><div><strong>AI Generated</strong> — <!-- -->Page drafted entirely by AI from codebase or prompt instructions.<br><span class="aiBannerTypeExample_ARF9">(<!-- -->e.g., docs generated from codebase analysis<!-- -->)</span></div><span class="aiBannerTypeRowCurrent_FdRf">← this page</span></div><div class="aiBannerTypeRow_BfjY"><span class="aiBannerTypeRowIcon_oIKi">✋→🤖</span><div><strong>AI Transformatted</strong> — <!-- -->Human provided raw material; AI restructured it into a different format.<br><span class="aiBannerTypeExample_ARF9">(<!-- -->e.g., livestream → blog post, meeting notes → docs<!-- -->)</span></div></div><div class="aiBannerTypeRow_BfjY"><span class="aiBannerTypeRowIcon_oIKi">✋</span><div><strong>Human Generated</strong> — <!-- -->Page written entirely by a human author.<br><span class="aiBannerTypeExample_ARF9">(<!-- -->e.g., hand-written tutorial<!-- -->)</span></div></div></div><a href="https://docs.freemocap.org/skellydocs/docs/ai-generated-banner" class="aiBannerMoreInfo_PyBP" target="_blank" rel="noopener noreferrer">More info about content generation types ↗</a></details></div></details>
+<p>Welcome to the <strong>glossa</strong> blog!</p>
+<p>This is the first blog post for the glossa documentation site, built with <a href="https://docusaurus.io/" target="_blank" rel="noopener noreferrer" class="">Docusaurus</a> and the <a href="https://github.com/freemocap/skellydocs" target="_blank" rel="noopener noreferrer" class="">@freemocap/skellydocs</a> theme.</p>
+<p>Stay tuned for updates!</p>]]></content:encoded>
+            <category>welcome</category>
+        </item>
+    </channel>
+</rss>

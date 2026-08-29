@@ -1,0 +1,28 @@
+{
+  "id": "status",
+  "title": "Status",
+  "description": "Honest inventory as of the v0.1.0 PoC audit (Aug 2026). Frame: what works,",
+  "source": "@site/docs/status.md",
+  "sourceDirName": ".",
+  "slug": "/status",
+  "permalink": "/glossa/docs/status",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/jonmatthis/glossa/tree/main/glossa-docs/docs/status.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 5,
+  "frontMatter": {
+    "sidebar_position": 5,
+    "title": "Status"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Ontology",
+    "permalink": "/glossa/docs/ontology"
+  },
+  "next": {
+    "title": "Platforms & Build",
+    "permalink": "/glossa/docs/platforms"
+  }
+}

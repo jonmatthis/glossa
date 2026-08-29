@@ -1,0 +1,28 @@
+{
+  "id": "overview",
+  "title": "Overview",
+  "description": "Glossa is a standalone, no-login, multilingual language tutor. A desktop",
+  "source": "@site/docs/overview.md",
+  "sourceDirName": ".",
+  "slug": "/overview",
+  "permalink": "/glossa/docs/overview",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/jonmatthis/glossa/tree/main/glossa-docs/docs/overview.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 2,
+  "frontMatter": {
+    "sidebar_position": 2,
+    "title": "Overview"
+  },
+  "sidebar": "docsSidebar",
+  "previous": {
+    "title": "Introduction",
+    "permalink": "/glossa/docs/intro"
+  },
+  "next": {
+    "title": "Architecture",
+    "permalink": "/glossa/docs/architecture"
+  }
+}
