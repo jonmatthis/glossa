@@ -28,7 +28,7 @@ commit"; the whole app tree is untracked).
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (tokens/translation/mechanics/scaffolds) with per-section degradation | `commands.rs:353-508` |
 | **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split) | `commands.rs` coach pass, `coach.md`, Coach tab |
-| **Voice I/O** — mic with 20s-silence auto-stop + optional auto-send; OS-voice auto-speak + 🔊 replay; configurable shortcuts | `GuidedPage.toggleMic`, `lib/speech.ts`, `lib/keyboard.ts` |
+| **Voice I/O** — mic with 20s-silence auto-stop, **live scrolling waveform** while recording, optional auto-send; OS-voice auto-speak + 🔊 replay; configurable shortcuts | `GuidedPage.toggleMic`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
 | Observer pass, non-overlapping, plan/profile persisted + learner-visible drawer | `commands.rs:262-351`, `observer.rs` |
 | Anti-repetition (taught ledger + 20-card ring) | `observer.rs::directives_block`, `commands.rs:483-496` |
 | Structured output fallback ladder | `ai.rs::structured_validated` |
@@ -113,7 +113,10 @@ the app loads no remote content).
 - Story cache restore only looks up the `beginner` slot regardless of last
   used level (`StoriesPage.tsx`). — **open**
 - `localStorage.glossa_target` can go stale vs. actual settings. — **open**
-- Settings modal requests mic permission as a side effect of opening. — **open**
+- Settings modal requests mic permission as a side effect of opening. —
+  **fixed**: mic enumeration happens only when the Audio & Voice section is
+  visited (the settings shell was also restructured into a two-column
+  tree + search — see below).
 - Mic auto-stop: **redesigned** — toggle on/off manually; recording
   auto-stops after 20s of silence (WebAudio RMS detection), not 10s wall-clock.
   — **fixed**

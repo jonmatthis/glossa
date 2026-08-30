@@ -156,6 +156,10 @@ body {
   border: 1px solid var(--paper-line); background: #fff; cursor: pointer; font-size: 13px;
 }
 .steer-dice:hover { border-color: var(--amber-deep); }
+.wave-strip {
+  margin: 2px 2px 6px; border: 1px solid var(--line); border-radius: 10px;
+  overflow: hidden;
+}
 .crow { display: flex; gap: 8px; align-items: center; }
 .field {
   flex: 1; background: #fff; border: 1px solid var(--paper-line); border-radius: 20px;
@@ -427,6 +431,60 @@ body {
 .key-badge.checking { color: var(--mut-d); }
 .key-badge.valid { color: #58c98b; }
 .key-badge.invalid { color: #e06c6c; cursor: help; }
+/* Settings: two-column shell (nav tree + content pane) */
+.settings-backdrop {
+  position: fixed; inset: 0; background: rgba(5, 9, 15, 0.72); z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.settings-modal {
+  width: min(880px, 96vw); height: min(660px, 92dvh);
+  display: flex; background: var(--chrome);
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.settings-nav {
+  width: 208px; flex: none; display: flex; flex-direction: column; gap: 3px;
+  background: var(--inset); border-right: 1px solid var(--line); padding: 12px 10px;
+}
+.settings-search {
+  background: var(--chrome); border: 1px solid var(--line2); border-radius: 8px;
+  color: var(--ink-d); font-size: 13px; padding: 7px 10px; outline: none;
+  margin-bottom: 8px; width: 100%;
+}
+.settings-search:focus { border-color: var(--steel); }
+.settings-tree { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border-radius: 8px; border: none; background: none; color: var(--mut-d);
+  cursor: pointer; font-size: 13.5px; text-align: left;
+}
+.nav-item:hover { color: var(--ink-d); background: var(--chrome2); }
+.nav-item.active { background: var(--chrome2); color: var(--ink-d); }
+.nav-icon { width: 18px; text-align: center; }
+.settings-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-head {
+  padding: 16px 22px 10px; border-bottom: 1px solid var(--line); flex: none;
+}
+.settings-head h2 { margin: 0 0 4px; font-size: 17px; }
+.settings-head .sub { margin: 0; }
+.settings-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 22px; overscroll-behavior: contain; }
+.settings-content .modal-actions {
+  border-top: 1px solid var(--line); margin: 0; padding: 12px 22px; flex: none;
+}
+.settings-group-k {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--steel); margin: 2px 0 4px;
+}
+@media (max-width: 700px) {
+  .settings-modal { flex-direction: column; height: 94dvh; }
+  .settings-nav {
+    width: 100%; flex-direction: row; align-items: center;
+    border-right: none; border-bottom: 1px solid var(--line);
+    overflow-x: auto; padding: 10px 12px;
+  }
+  .settings-tree { flex-direction: row; gap: 4px; }
+  .nav-item { white-space: nowrap; }
+  .settings-search { width: 150px; flex: none; }
+}
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
 /* Mobile: analysis panel becomes a collapsible bottom panel under the chat.

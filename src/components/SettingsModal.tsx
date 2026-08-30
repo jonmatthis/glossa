@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { Settings } from '../types'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import type { Settings, Shortcuts } from '../types'
 import {
   getSettings,
   logError,
@@ -10,49 +10,11 @@ import {
   NATIVE_LANGUAGES,
   TARGET_LANGUAGES,
 } from '../lib/tauri'
-import { comboFromEvent, SHORTCUT_DEFAULTS } from '../lib/keyboard'
+import { comboFromEvent, SHORTCUT_DEFAULTS, type ShortcutAction } from '../lib/keyboard'
 
 type KeyCheck = { state: 'idle' | 'checking' | 'valid' | 'invalid'; detail: string }
 
-/// Shortcut recorder: click to arm, press a combo, Esc clears back to default.
-function ShortcutField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-}) {
-  const [recording, setRecording] = useState(false)
-  return (
-    <div className="shortcut-field">
-      <span className="shortcut-label">{label}</span>
-      <input
-        data-shortcut-capture={recording || undefined}
-        className="shortcut-input"
-        value={recording ? 'press keys…' : value}
-        readOnly
-        onFocus={() => setRecording(true)}
-        onBlur={() => setRecording(false)}
-        onKeyDown={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          if (e.key === 'Escape') {
-            onChange(SHORTCUT_DEFAULTS[label.toLowerCase().replace(/[^a-z]/g, '') as keyof typeof SHORTCUT_DEFAULTS] ?? '')
-            ;(e.target as HTMLInputElement).blur()
-            return
-          }
-          if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta')
-            return
-          const combo = comboFromEvent(e)
-          onChange(combo)
-          ;(e.target as HTMLInputElement).blur()
-        }}
-      />
-    </div>
-  )
-}
+type SectionId = 'keys' | 'models' | 'languages' | 'voice' | 'shortcuts'
 
 function KeyBadge({ check }: { check: KeyCheck }) {
   if (check.state === 'idle') return null
@@ -75,6 +37,98 @@ function KeyBadge({ check }: { check: KeyCheck }) {
   )
 }
 
+/// Shortcut recorder: click to arm, press a combo. Esc resets to default.
+function ShortcutField({
+  label,
+  action,
+  value,
+  onChange,
+}: {
+  label: string
+  action: ShortcutAction
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [recording, setRecording] = useState(false)
+  return (
+    <div className="shortcut-field">
+      <span className="shortcut-label">{label}</span>
+      <input
+        data-shortcut-capture={recording || undefined}
+        className="shortcut-input"
+        value={recording ? 'press keys…' : value || SHORTCUT_DEFAULTS[action]}
+        readOnly
+        onFocus={() => setRecording(true)}
+        onBlur={() => setRecording(false)}
+        onKeyDown={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (e.key === 'Escape') {
+            onChange(SHORTCUT_DEFAULTS[action])
+            ;(e.target as HTMLInputElement).blur()
+            return
+          }
+          if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta')
+            return
+          onChange(comboFromEvent(e))
+          ;(e.target as HTMLInputElement).blur()
+        }}
+      />
+    </div>
+  )
+}
+
+const SECTIONS: { id: SectionId; label: string; icon: string; desc: string }[] = [
+  {
+    id: 'keys',
+    label: 'API Keys',
+    icon: '🔑',
+    desc: 'Provider credentials. Stored locally, sent only to the provider, never shown after saving.',
+  },
+  {
+    id: 'models',
+    label: 'Models',
+    icon: '🧠',
+    desc: 'Which models power the tutor/analysis workers and the reasoning observer.',
+  },
+  {
+    id: 'languages',
+    label: 'Languages',
+    icon: '🌐',
+    desc: "What you're learning and what you already speak.",
+  },
+  {
+    id: 'voice',
+    label: 'Audio & Voice',
+    icon: '🎙',
+    desc: 'Microphone, speech playback, and transcription behavior.',
+  },
+  {
+    id: 'shortcuts',
+    label: 'Shortcuts',
+    icon: '⌨',
+    desc: 'Click a field and press the combo. Esc resets to default.',
+  },
+]
+
+const SECTION_LABEL: Record<SectionId, string> = Object.fromEntries(
+  SECTIONS.map((s) => [s.id, s.label])
+) as Record<SectionId, string>
+
+interface RowDef {
+  section: SectionId
+  label: string
+  kw: string
+  node: ReactNode
+}
+
+const SHORTCUT_ROWS: { action: ShortcutAction; label: string }[] = [
+  { action: 'mic', label: 'Toggle microphone' },
+  { action: 'speak', label: 'Speak last reply' },
+  { action: 'panel', label: 'Toggle analysis panel' },
+  { action: 'settings', label: 'Open settings' },
+]
+
 export function SettingsModal({
   onClose,
   onSaved,
@@ -87,9 +141,46 @@ export function SettingsModal({
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
   const [openrouterCheck, setOpenrouterCheck] = useState<KeyCheck>({ state: 'idle', detail: '' })
   const [groqCheck, setGroqCheck] = useState<KeyCheck>({ state: 'idle', detail: '' })
+  const [section, setSection] = useState<SectionId>('keys')
+  const [search, setSearch] = useState('')
 
-  // Validate both keys as soon as they change (debounced) — including on
-  // first load, so the user immediately sees whether stored keys are live.
+  useEffect(() => {
+    logInfo('[settings] modal opened')
+    void getSettings()
+      .then((s) => {
+        setSettings(s)
+        logInfo('[settings] loaded', {
+          target: s.target_language,
+          native: s.native_language,
+          model: s.openrouter_model,
+          openrouterKey: s.openrouter_key ? 'set' : 'MISSING',
+          groqKey: s.groq_key ? 'set' : 'MISSING',
+        })
+      })
+      .catch((e) => {
+        logError('[settings] load failed:', e)
+        setSettings(null)
+      })
+  }, [])
+
+  const listMics = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream.getTracks().forEach((t) => t.stop())
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      setMics(devices.filter((d) => d.kind === 'audioinput'))
+    } catch (e) {
+      logWarn('[settings] microphone enumeration failed:', e)
+    }
+  }, [])
+
+  // Mic enumeration only when the Audio section is visited — opening
+  // Settings no longer trips the mic-permission prompt as a side effect.
+  useEffect(() => {
+    if (section === 'voice') void listMics()
+  }, [section, listMics])
+
+  // Validate both keys as they change (debounced) — including on first load.
   useEffect(() => {
     const key = settings?.openrouter_key
     if (key === undefined) return
@@ -124,43 +215,6 @@ export function SettingsModal({
     return () => clearTimeout(t)
   }, [settings?.groq_key])
 
-  useEffect(() => {
-    logInfo('[settings] modal opened')
-    void getSettings()
-      .then((s) => {
-        setSettings(s)
-        logInfo('[settings] loaded', {
-          target: s.target_language,
-          native: s.native_language,
-          model: s.openrouter_model,
-          openrouterKey: s.openrouter_key ? 'set' : 'MISSING',
-          groqKey: s.groq_key ? 'set' : 'MISSING',
-        })
-      })
-      .catch((e) => {
-        logError('[settings] load failed:', e)
-        setSettings(null)
-      })
-    void listMics()
-  }, [])
-
-  const listMics = useCallback(async () => {
-    try {
-      // Request permission briefly so device labels are populated.
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      stream.getTracks().forEach((t) => t.stop())
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const inputs = devices.filter((d) => d.kind === 'audioinput')
-      setMics(inputs)
-      logInfo(
-        '[settings] microphones:',
-        inputs.map((d, i) => `${i}: ${d.label || '(unlabeled)'} [${d.deviceId.slice(0, 8)}…]`)
-      )
-    } catch (e) {
-      logWarn('[settings] microphone enumeration failed:', e)
-    }
-  }, [])
-
   const save = useCallback(async () => {
     if (!settings) return
     setSaving(true)
@@ -168,7 +222,6 @@ export function SettingsModal({
       target: settings.target_language,
       native: settings.native_language,
       model: settings.openrouter_model,
-      mic: settings.microphone_device_id ?? '(default)',
     })
     try {
       await saveSettings(settings)
@@ -176,7 +229,6 @@ export function SettingsModal({
       onSaved(settings)
     } catch (e) {
       logError('[settings] save failed:', e)
-    } finally {
       setSaving(false)
     }
   }, [settings, onSaved])
@@ -184,32 +236,23 @@ export function SettingsModal({
   if (!settings) {
     return (
       <div className="modal-backdrop" onClick={onClose}>
-        <div
-          className="modal"
-          onClick={(e) => e.stopPropagation()}
-          onFocusCapture={(e) => {
-            // With the keyboard open, keep the focused field visible.
-            const t = e.target as HTMLElement
-            if (t.tagName === 'INPUT' || t.tagName === 'SELECT') {
-              t.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
-            }
-          }}
-        >
+        <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
           <p className="center-note">Loading…</p>
         </div>
       </div>
     )
   }
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Settings</h2>
-        <p className="sub">
-          Keys are stored locally on this machine and sent only to the
-          corresponding providers. OpenRouter powers the tutor and stories;
-          Groq powers speech-to-text.
-        </p>
+  const setShortcuts = (patch: Partial<Shortcuts>) =>
+    setSettings({ ...settings, shortcuts: { ...settings.shortcuts, ...patch } })
+
+  // ── Row registry: adding a setting = one entry here ──────────────────────
+  const rows: Record<string, RowDef> = {
+    openrouter_key: {
+      section: 'keys',
+      label: 'OpenRouter API key',
+      kw: 'openrouter api key credential token chat tutor',
+      node: (
         <div className="form-row">
           <label>OpenRouter API key</label>
           <div className="key-row">
@@ -222,6 +265,13 @@ export function SettingsModal({
             <KeyBadge check={openrouterCheck} />
           </div>
         </div>
+      ),
+    },
+    groq_key: {
+      section: 'keys',
+      label: 'Groq API key',
+      kw: 'groq api key credential speech transcription stt whisper voice',
+      node: (
         <div className="form-row">
           <label>Groq API key (speech-to-text)</label>
           <div className="key-row">
@@ -234,23 +284,44 @@ export function SettingsModal({
             <KeyBadge check={groqCheck} />
           </div>
         </div>
+      ),
+    },
+    worker_model: {
+      section: 'models',
+      label: 'Worker model (tutor · analysis · coach)',
+      kw: 'worker model llm gemini openai deepseek tutor analysis speed',
+      node: (
         <div className="form-row">
-          <label>Model (OpenRouter)</label>
+          <label>Worker model</label>
           <input
             value={settings.openrouter_model}
             onChange={(e) => setSettings({ ...settings, openrouter_model: e.target.value })}
           />
         </div>
+      ),
+    },
+    observer_model: {
+      section: 'models',
+      label: 'Observer model (reasoning · planning)',
+      kw: 'observer model reasoning planning coach agent',
+      node: (
         <div className="form-row">
-          <label>Observer model (reasoning — steers the tutor)</label>
+          <label>Observer model</label>
           <input
             value={settings.observer_model ?? ''}
-            placeholder="(same as tutor model)"
+            placeholder="(same as worker model)"
             onChange={(e) =>
               setSettings({ ...settings, observer_model: e.target.value || null })
             }
           />
         </div>
+      ),
+    },
+    target_language: {
+      section: 'languages',
+      label: 'I want to learn',
+      kw: 'target language learn spanish studying',
+      node: (
         <div className="form-row">
           <label>I want to learn</label>
           <select
@@ -264,6 +335,13 @@ export function SettingsModal({
             ))}
           </select>
         </div>
+      ),
+    },
+    native_language: {
+      section: 'languages',
+      label: 'My native language',
+      kw: 'native language explanations mother tongue',
+      node: (
         <div className="form-row">
           <label>My native language</label>
           <select
@@ -277,6 +355,13 @@ export function SettingsModal({
             ))}
           </select>
         </div>
+      ),
+    },
+    microphone: {
+      section: 'voice',
+      label: 'Microphone',
+      kw: 'microphone input device recording yeti',
+      node: (
         <div className="form-row">
           <label>Microphone</label>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -301,6 +386,13 @@ export function SettingsModal({
             </button>
           </div>
         </div>
+      ),
+    },
+    auto_speak: {
+      section: 'voice',
+      label: 'Auto-speak tutor replies',
+      kw: 'auto speak tts voice speech playback audio read aloud',
+      node: (
         <div className="form-row check-row">
           <label className="check-label">
             <input
@@ -311,6 +403,13 @@ export function SettingsModal({
             <span>Auto-speak tutor replies (OS voice, free &amp; offline)</span>
           </label>
         </div>
+      ),
+    },
+    auto_send: {
+      section: 'voice',
+      label: 'Auto-send transcriptions',
+      kw: 'auto send transcription mic speech stt voice input',
+      node: (
         <div className="form-row check-row">
           <label className="check-label">
             <input
@@ -321,47 +420,114 @@ export function SettingsModal({
             <span>Auto-send transcriptions (mic → send immediately)</span>
           </label>
         </div>
+      ),
+    },
+  }
+  for (const sr of SHORTCUT_ROWS) {
+    rows[`shortcut_${sr.action}`] = {
+      section: 'shortcuts',
+      label: sr.label,
+      kw: `keyboard shortcut hotkey key combo ${sr.label}`,
+      node: (
         <div className="form-row">
-          <label>Keyboard shortcuts (click a field, press the combo; Esc resets to default)</label>
-          <div className="shortcut-grid">
-            <ShortcutField
-              label="Mic"
-              value={settings.shortcuts.mic}
-              onChange={(v) =>
-                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, mic: v } })
-              }
-            />
-            <ShortcutField
-              label="Speak last reply"
-              value={settings.shortcuts.speak}
-              onChange={(v) =>
-                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, speak: v } })
-              }
-            />
-            <ShortcutField
-              label="Toggle analysis panel"
-              value={settings.shortcuts.panel}
-              onChange={(v) =>
-                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, panel: v } })
-              }
-            />
-            <ShortcutField
-              label="Open settings"
-              value={settings.shortcuts.settings}
-              onChange={(v) =>
-                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, settings: v } })
-              }
-            />
+          <ShortcutField
+            label={sr.label}
+            action={sr.action}
+            value={settings.shortcuts[sr.action]}
+            onChange={(v) => setShortcuts({ [sr.action]: v })}
+          />
+        </div>
+      ),
+    }
+  }
+
+  const q = search.trim().toLowerCase()
+  const searching = q.length > 0
+  const allRows = Object.entries(rows)
+  const visibleRows = searching
+    ? allRows.filter(
+        ([, r]) => r.label.toLowerCase().includes(q) || r.kw.includes(q)
+      )
+    : allRows.filter(([, r]) => r.section === section)
+
+  const activeSection = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0]
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="settings-modal"
+        onClick={(e) => e.stopPropagation()}
+        onFocusCapture={(e) => {
+          const t = e.target as HTMLElement
+          if (t.tagName === 'INPUT' || t.tagName === 'SELECT') {
+            t.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+          }
+        }}
+      >
+        <aside className="settings-nav">
+          <input
+            className="settings-search"
+            placeholder="Search settings…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search settings"
+          />
+          <nav className="settings-tree">
+            {SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`nav-item ${!searching && section === s.id ? 'active' : ''}`}
+                onClick={() => {
+                  setSearch('')
+                  setSection(s.id)
+                }}
+              >
+                <span className="nav-icon">{s.icon}</span>
+                {s.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <main className="settings-content">
+          <div className="settings-head">
+            <h2>{searching ? `Search: “${search.trim()}”` : activeSection.label}</h2>
+            <p className="sub">
+              {searching
+                ? `${visibleRows.length} match${visibleRows.length === 1 ? '' : 'es'}`
+                : activeSection.desc}
+            </p>
           </div>
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="button" className="btn primary" disabled={saving} onClick={() => void save()}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+          <div className="settings-scroll">
+            {searching && visibleRows.length === 0 && (
+              <p className="center-note">Nothing matches “{search.trim()}”.</p>
+            )}
+            {visibleRows.map(([id, row]) => (
+              <div key={id} className="settings-entry">
+                {searching && (
+                  <p className="settings-group-k">{SECTION_LABEL[row.section]}</p>
+                )}
+                {row.node}
+              </div>
+            ))}
+            {!searching && visibleRows.length === 0 && (
+              <p className="center-note">Nothing here yet.</p>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={saving}
+              onClick={() => void save()}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </main>
       </div>
     </div>
   )

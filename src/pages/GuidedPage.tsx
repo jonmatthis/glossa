@@ -18,6 +18,7 @@ import { loadVoices, speak, speechSupported, stopSpeaking } from '../lib/speech'
 import { comboFromEvent } from '../lib/keyboard'
 import { groupSentences, splitSentences } from '../lib/sentences'
 import { normalizeDocs } from '../lib/normalize'
+import { WaveformStrip } from '../components/WaveformStrip'
 import { logDebug, logError, logInfo, logWarn } from '../lib/log'
 import { needsSpaceBetween } from '../lib/token-spacing'
 
@@ -373,6 +374,7 @@ export default function GuidedPage() {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const silencePollRef = useRef<number | null>(null)
+  const [recAnalyser, setRecAnalyser] = useState<AnalyserNode | null>(null)
 
   // Latest-identity refs so async callbacks (recorder.onstop, key handlers)
   // always route through the current closures instead of stale ones.
@@ -671,6 +673,7 @@ export default function GuidedPage() {
         stream.getTracks().forEach((t) => t.stop())
         recorderRef.current = null
         setRecording(false)
+        setRecAnalyser(null)
         // Tear down the silence detector.
         if (silencePollRef.current !== null) {
           window.clearInterval(silencePollRef.current)
@@ -727,15 +730,17 @@ export default function GuidedPage() {
 
       // Silence auto-stop: reset a 20s timer whenever the mic picks up voice,
       // stop when the timer expires. Talking continuously keeps it rolling.
+      // The same analyser feeds the live waveform strip (2048 = full detail).
       try {
         const ctx = new AudioContext()
         void ctx.resume()
         const source = ctx.createMediaStreamSource(stream)
         const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
+        analyser.fftSize = 2048
         source.connect(analyser)
         const buf = new Float32Array(analyser.fftSize)
         audioCtxRef.current = ctx
+        setRecAnalyser(analyser)
         let lastVoiceAt = Date.now()
         silencePollRef.current = window.setInterval(() => {
           analyser.getFloatTimeDomainData(buf)
@@ -912,6 +917,9 @@ export default function GuidedPage() {
                  </button>
                ))}
            </div>
+          {recording && recAnalyser && (
+            <WaveformStrip analyserNode={recAnalyser} height={44} timelineSeconds={6} />
+          )}
            <div className="steer-row">
              <select
                className="steer-select"
