@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import type {
   AssistLevel,
+  CoachFeedback,
   GuidedEvent,
   GuidedToken,
   GuidedTurnResult,
@@ -14,6 +15,7 @@ import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPop
 import { getPlan, getSettings, isTauri, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
 import { loadVoices, speak, speechSupported, stopSpeaking } from '../lib/speech'
+import { comboFromEvent } from '../lib/keyboard'
 import { groupSentences, splitSentences } from '../lib/sentences'
 import { normalizeDocs } from '../lib/normalize'
 import { logDebug, logError, logInfo, logWarn } from '../lib/log'
@@ -25,13 +27,30 @@ interface Turn {
   assistant: GuidedTurnResult | null
   pendingText: string
   analysisState: 'pending' | 'done' | 'failed' | null
+  coach?: CoachFeedback
+  coachError?: string
 }
 
 const ASSIST_STORAGE_KEY = 'glossa_assist'
 const BREAK_STORAGE_KEY = 'glossa_break'
 const FOCUS_STORAGE_KEY = 'glossa_focus'
 const MOBILE_QUERY = '(max-width: 860px)'
-const MIC_AUTO_STOP_MS = 10_000
+const MIC_SILENCE_STOP_MS = 20_000
+const MIC_VOICE_THRESHOLD = 0.02
+
+// Conversation steering: level feeds the CEFR in every prompt; topic steers
+// the conversation when natural. Persisted per device.
+const STEER_LEVELS = [
+  { value: 'beginner', label: 'Beginner', cefr: 'A2' },
+  { value: 'intermediate', label: 'Intermediate', cefr: 'B1' },
+  { value: 'advanced', label: 'Advanced', cefr: 'C1' },
+]
+const STEER_TOPICS = [
+  'Daily routines', 'Food & cooking', 'Travel stories', 'Work & studies',
+  'Family & friends', 'Music & hobbies', 'Movies & series', 'Weekend plans',
+  'Childhood memories', 'Weather & seasons', 'Sports & exercise', 'Technology',
+  'Pets & animals', 'Hometown', 'Dreams & goals', 'Shopping & markets',
+]
 const ASSIST_LABELS: Record<AssistLevel, string> = {
   0: 'Immersion',
   1: 'Light',
@@ -179,6 +198,96 @@ const TurnView = memo(function TurnView({
   )
 })
 
+/// Sidebar tutor: latest learner message's coaching. Per-message
+/// auto-feedback; the interactive coach thread is a planned bite.
+function CoachFeed({ turns }: { turns: Turn[] }) {
+  const latest = [...turns]
+    .reverse()
+    .find((t) => t.user !== null && (t.coach || t.coachError))
+
+  if (!latest) {
+    return (
+      <div className="break-scroll coach-feed">
+        <p className="center-note">
+          Say something in Spanish — your coach will weigh in here.
+        </p>
+      </div>
+    )
+  }
+  if (latest.coachError) {
+    return (
+      <div className="break-scroll coach-feed">
+        <div className="turn-errors">⚠ {latest.coachError}</div>
+      </div>
+    )
+  }
+  const c = latest.coach
+  if (!c) {
+    return (
+      <div className="break-scroll coach-feed">
+        <p className="center-note">⟳ Coach is listening…</p>
+      </div>
+    )
+  }
+  return (
+    <div className="break-scroll coach-feed">
+      <div className="coach-card">
+        <div className="coach-scores">
+          <ScoreMeter label="Understood" value={c.comprehensibility} />
+          <ScoreMeter label="Grammar" value={c.grammar} />
+        </div>
+        <p className="coach-remark">{c.remark}</p>
+        {(c.used_target.length > 0 || c.used_native.length > 0) && (
+          <div className="coach-split">
+            {c.used_target.length > 0 && (
+              <div className="split-row">
+                <span className="split-k target">ES</span>
+                <span>{c.used_target.join(' · ')}</span>
+              </div>
+            )}
+            {c.used_native.length > 0 && (
+              <div className="split-row">
+                <span className="split-k native">EN</span>
+                <span>{c.used_native.join(' · ')}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {c.corrections.length > 0 && (
+        <p className="sect-k" style={{ marginTop: 14 }}>
+          Corrections
+        </p>
+      )}
+      {c.corrections.map((cor, i) => (
+        <div key={i} className="coach-correction">
+          <div className="cor-line">
+            <s>{cor.said}</s> <span className="cor-arrow">→</span>{' '}
+            <b>{cor.corrected}</b> <span className="cor-kind">{cor.kind}</span>
+          </div>
+          <p className="cor-why">{cor.explanation}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ScoreMeter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="score-meter">
+      <span className="score-label">{label}</span>
+      <span className="score-dots">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span key={n} className={n <= value ? 'dot on' : 'dot'}>
+            ●
+          </span>
+        ))}
+      </span>
+      <span className="score-num">{value}/5</span>
+    </div>
+  )
+}
+
 export default function GuidedPage() {
   const [turns, setTurns] = useState<Turn[]>([])
   const [assist, setAssist] = useState<AssistLevel>(3)
@@ -221,6 +330,13 @@ export default function GuidedPage() {
   const [focusOpen, setFocusOpen] = useState<boolean>(() => {
     return localStorage.getItem(FOCUS_STORAGE_KEY) === 'open'
   })
+  const [coachTab, setCoachTab] = useState<'coach' | 'analysis'>('coach')
+  const [steerLevel, setSteerLevel] = useState<string>(
+    () => localStorage.getItem('glossa_level') ?? 'beginner'
+  )
+  const [steerTopic, setSteerTopic] = useState<string>(
+    () => localStorage.getItem('glossa_topic') ?? ''
+  )
   const toggleFocus = useCallback(() => {
     setFocusOpen((open) => {
       localStorage.setItem(FOCUS_STORAGE_KEY, open ? 'closed' : 'open')
@@ -255,6 +371,16 @@ export default function GuidedPage() {
   const turnsRef = useRef<Turn[]>([])
   turnsRef.current = turns
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const silencePollRef = useRef<number | null>(null)
+
+  // Latest-identity refs so async callbacks (recorder.onstop, key handlers)
+  // always route through the current closures instead of stale ones.
+  const settingsRef = useRef<Settings | null>(null)
+  settingsRef.current = settings
+  const sendRef = useRef<(text: string) => Promise<void>>(async () => {})
+  const toggleMicRef = useRef<() => void>(() => {})
+  const toggleBreakRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     logInfo('[guided] page mounted, isTauri =', isTauri)
@@ -418,6 +544,17 @@ export default function GuidedPage() {
                   : t.assistant,
               }))
               break
+            case 'coach_done':
+              logInfo(
+                '[coach] feedback:', event.feedback.corrections.length, 'corrections,',
+                'comp', event.feedback.comprehensibility, '/ grammar', event.feedback.grammar
+              )
+              updatePending((t) => ({ ...t, coach: event.feedback }))
+              break
+            case 'coach_failed':
+              logWarn('[coach] failed:', event.error)
+              updatePending((t) => ({ ...t, coachError: event.error }))
+              break
             case 'plan_updated':
               logInfo('[guided] plan updated:', {
                 focus: event.plan.session_focus,
@@ -434,6 +571,8 @@ export default function GuidedPage() {
           history,
           assistLevel: assist,
           greeting: body.greeting ?? false,
+          level: steerLevel,
+          topic: steerTopic || null,
           onEvent: channel,
         })
         // Command resolved = reply pass done (fallback if the event raced).
@@ -455,7 +594,7 @@ export default function GuidedPage() {
         setSending(false)
       }
     },
-    [assist, autoSpeak, speakReply]
+    [assist, autoSpeak, speakReply, steerLevel, steerTopic]
   )
 
   // Diagnostic: keyboard/viewport resize tracking. If the IME is handled
@@ -499,6 +638,9 @@ export default function GuidedPage() {
     stopSpeaking() // new turn: silence any ongoing playback
     await requestTurn({ message })
   }
+  sendRef.current = send
+  toggleMicRef.current = toggleMic
+  toggleBreakRef.current = toggleBreak
 
   async function toggleMic() {
     if (recording) {
@@ -529,6 +671,13 @@ export default function GuidedPage() {
         stream.getTracks().forEach((t) => t.stop())
         recorderRef.current = null
         setRecording(false)
+        // Tear down the silence detector.
+        if (silencePollRef.current !== null) {
+          window.clearInterval(silencePollRef.current)
+          silencePollRef.current = null
+        }
+        void audioCtxRef.current?.close()
+        audioCtxRef.current = null
         const blob = new Blob(chunks, { type: recorder.mimeType })
         logInfo('[mic] recording finished:', blob.size, 'bytes,', recorder.mimeType)
         const buffer = await blob.arrayBuffer()
@@ -560,27 +709,94 @@ export default function GuidedPage() {
         try {
           const text = await transcribeAudio(btoa(binary))
           logInfo('[mic] transcribed:', text)
-          if (text) setInput((prev) => (prev ? `${prev} ${text}` : text))
-          else logWarn('[mic] transcription was empty (silence?)')
+          if (text) {
+            if (settingsRef.current?.auto_send) {
+              logInfo('[mic] auto-send enabled — sending transcription')
+              void sendRef.current(text)
+            } else {
+              setInput((prev) => (prev ? `${prev} ${text}` : text))
+            }
+          } else logWarn('[mic] transcription was empty (silence?)')
         } catch (e) {
           logError('[mic] transcription failed:', e)
           setError(String(e).replace(/^Error:\s*/, ''))
         }
       }
       recorder.start()
-      logInfo('[mic] recording started (auto-stop in 10s, click again to stop early)')
-      setTimeout(() => {
-        if (recorder.state !== 'inactive') {
-          logInfo('[mic] auto-stopping')
-          recorder.stop()
-        }
-      }, MIC_AUTO_STOP_MS)
+      logInfo('[mic] recording started (tap again to stop; auto-stops after 20s of silence)')
+
+      // Silence auto-stop: reset a 20s timer whenever the mic picks up voice,
+      // stop when the timer expires. Talking continuously keeps it rolling.
+      try {
+        const ctx = new AudioContext()
+        void ctx.resume()
+        const source = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        source.connect(analyser)
+        const buf = new Float32Array(analyser.fftSize)
+        audioCtxRef.current = ctx
+        let lastVoiceAt = Date.now()
+        silencePollRef.current = window.setInterval(() => {
+          analyser.getFloatTimeDomainData(buf)
+          let peak = 0
+          for (let i = 0; i < buf.length; i++) {
+            const a = Math.abs(buf[i])
+            if (a > peak) peak = a
+          }
+          const now = Date.now()
+          if (peak >= MIC_VOICE_THRESHOLD) {
+            lastVoiceAt = now
+          } else if (
+            recorder.state !== 'inactive' &&
+            now - lastVoiceAt >= MIC_SILENCE_STOP_MS
+          ) {
+            logInfo('[mic] silence auto-stop (20s without voice)')
+            recorder.stop()
+          }
+        }, 500)
+      } catch (e) {
+        logWarn('[mic] silence detection unavailable — manual stop only:', e)
+      }
     } catch (e) {
       setRecording(false)
       logError('[mic] failed to start recording:', e)
       setError(String(e).replace(/^Error:\s*/, ''))
     }
   }
+
+  // Configurable keyboard shortcuts. Modifier combos work while typing;
+  // the handler ignores repeat events and the shortcut-capture inputs.
+  useEffect(() => {
+    const shortcuts = settings?.shortcuts
+    if (!shortcuts) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('[data-shortcut-capture]')) return
+      const combo = comboFromEvent(e)
+      const inField = /^(input|textarea|select)$/i.test(target?.tagName ?? '')
+      const hasMod = e.ctrlKey || e.altKey || e.metaKey
+      if (!hasMod && inField) return
+      if (combo === shortcuts.mic) {
+        e.preventDefault()
+        toggleMicRef.current()
+      } else if (combo === shortcuts.speak) {
+        e.preventDefault()
+        const last = [...turnsRef.current].reverse().find((t) => t.assistant)
+        if (last?.assistant) speakReply(last.assistant.reply)
+      } else if (combo === shortcuts.panel) {
+        e.preventDefault()
+        toggleBreakRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [settings?.shortcuts, speakReply])
+
+
+
+
 
   const latestAssistantId = [...turns].reverse().find((t) => t.assistant)?.id ?? null
   const pinnedTurn =
@@ -693,11 +909,59 @@ export default function GuidedPage() {
                   onClick={() => setInput(`${starter} `)}
                 >
                   {starter}
-                </button>
-              ))}
-          </div>
-          <form
-            className="crow"
+                 </button>
+               ))}
+           </div>
+           <div className="steer-row">
+             <select
+               className="steer-select"
+               value={steerLevel}
+               onChange={(e) => {
+                 setSteerLevel(e.target.value)
+                 localStorage.setItem('glossa_level', e.target.value)
+               }}
+               aria-label="Learner level"
+               title="Learner level — steers every prompt"
+             >
+               {STEER_LEVELS.map((l) => (
+                 <option key={l.value} value={l.value}>
+                   {l.label}
+                 </option>
+               ))}
+             </select>
+             <select
+               className="steer-select topic"
+               value={steerTopic}
+               onChange={(e) => {
+                 setSteerTopic(e.target.value)
+                 localStorage.setItem('glossa_topic', e.target.value)
+               }}
+               aria-label="Conversation topic"
+               title="Topic steering — the tutor works the conversation toward this"
+             >
+               <option value="">Topic: anything</option>
+               {STEER_TOPICS.map((tp) => (
+                 <option key={tp} value={tp}>
+                   {tp}
+                 </option>
+               ))}
+             </select>
+             <button
+               type="button"
+               className="steer-dice"
+               title="Random topic"
+               aria-label="Random topic"
+               onClick={() => {
+                 const tp = STEER_TOPICS[Math.floor(Math.random() * STEER_TOPICS.length)]
+                 setSteerTopic(tp)
+                 localStorage.setItem('glossa_topic', tp)
+               }}
+             >
+               🎲
+             </button>
+           </div>
+           <form
+             className="crow"
             onSubmit={(e) => {
               e.preventDefault()
               void send(input)
@@ -753,29 +1017,51 @@ export default function GuidedPage() {
             <span className="chev">{breakOpen ? '▾' : '▸'}</span>
           </span>
         </button>
-        <button
-          type="button"
-          className="focus-toggle"
-          onClick={toggleFocus}
-          aria-expanded={focusOpen}
-          title={focusOpen ? 'Hide session focus' : 'Show session focus'}
-        >
-          {focusOpen ? '▾' : '▸'} Session focus
-          {!focusOpen && plan && plan.session_focus.length > 0 && ` (${plan.session_focus.length})`}
-        </button>
-        {focusOpen && (
-          <div className="focus-strip">
-            {plan && plan.session_focus.length > 0 ? (
-              plan.session_focus.map((focus) => (
-                <span key={focus} className="focus-chip">
-                  {focus}
-                </span>
-              ))
-            ) : (
-              <span className="focus-chip muted">Warming up — keep chatting and this fills in</span>
+        <div className="coach-tabs">
+          <button
+            type="button"
+            className={`coach-tab ${coachTab === 'coach' ? 'active' : ''}`}
+            onClick={() => setCoachTab('coach')}
+          >
+            Coach
+          </button>
+          <button
+            type="button"
+            className={`coach-tab ${coachTab === 'analysis' ? 'active' : ''}`}
+            onClick={() => setCoachTab('analysis')}
+          >
+            Analysis
+          </button>
+        </div>
+        {coachTab === 'analysis' && (
+          <>
+            <button
+              type="button"
+              className="focus-toggle"
+              onClick={toggleFocus}
+              aria-expanded={focusOpen}
+              title={focusOpen ? 'Hide session focus' : 'Show session focus'}
+            >
+              {focusOpen ? '▾' : '▸'} Session focus
+              {!focusOpen && plan && plan.session_focus.length > 0 && ` (${plan.session_focus.length})`}
+            </button>
+            {focusOpen && (
+              <div className="focus-strip">
+                {plan && plan.session_focus.length > 0 ? (
+                  plan.session_focus.map((focus) => (
+                    <span key={focus} className="focus-chip">
+                      {focus}
+                    </span>
+                  ))
+                ) : (
+                  <span className="focus-chip muted">Warming up — keep chatting and this fills in</span>
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
+        {coachTab === 'coach' && <CoachFeed turns={turns} />}
+        {coachTab === 'analysis' && (
         <div className="break-scroll">
           {pinnedTurn?.assistant ? (
             <div>
@@ -855,6 +1141,7 @@ export default function GuidedPage() {
             <p className="center-note">The breakdown of the tutor&apos;s latest reply lands here.</p>
           )}
         </div>
+        )}
       </section>
 
       {/* ── Plan & Profile drawer (fully observable) ──────────────────── */}

@@ -1,3 +1,10 @@
+export interface Shortcuts {
+  mic: string
+  speak: string
+  panel: string
+  settings: string
+}
+
 export interface Settings {
   openrouter_key: string
   groq_key: string
@@ -7,6 +14,8 @@ export interface Settings {
   native_language: string
   microphone_device_id: string | null
   auto_speak: boolean
+  auto_send: boolean
+  shortcuts: Shortcuts
 }
 
 export interface GuidedToken {
@@ -53,6 +62,26 @@ export interface Story {
   paragraphs: StoryParagraph[]
 }
 
+export interface CoachCorrection {
+  said: string
+  corrected: string
+  explanation: string
+  kind: string
+}
+
+export interface CoachFeedback {
+  remark: string
+  used_target: string[]
+  used_native: string[]
+  corrections: CoachCorrection[]
+  comprehensibility: number
+  grammar: number
+}
+
+export type CoachEvent =
+  | { type: 'coach_done'; feedback: CoachFeedback }
+  | { type: 'coach_failed'; error: string }
+
 export type GuidedEvent =
   | { type: 'reply_delta'; text: string }
   | { type: 'reply_done'; reply: string }
@@ -63,6 +92,7 @@ export type GuidedEvent =
       mechanics?: Mechanic[]
       scaffolds?: Scaffolds
     }
+  | CoachEvent
   | { type: 'analysis_done'; turn: GuidedTurnResult }
   | { type: 'analysis_failed'; error: string }
   | { type: 'plan_updated'; plan: TeachingPlan; profile: Profile }

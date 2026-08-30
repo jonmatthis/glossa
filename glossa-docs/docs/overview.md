@@ -74,4 +74,5 @@ down in [Ontology](./ontology).
 - [Ontology](./ontology) — every domain entity, field-by-field, with lifecycle and ownership.
 - [Status](./status) — what works, what's partial, what's missing, tech-debt inventory.
 - [Platforms & Build](./platforms) — desktop today; the concrete path to Android/iOS.
+- [The Coach](./coach) — the sidebar tutor: a second, private conversation that grades and corrects you.
 - [Future Work](./future-work) — the mechanical analysis layer (dictionaries instead of LLMs) and the language ladder.

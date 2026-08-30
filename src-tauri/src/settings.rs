@@ -1,6 +1,44 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Configurable keyboard shortcuts. Stored as normalized combo strings
+/// ("ctrl+m") — see lib/keyboard.ts for the normalization dialect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Shortcuts {
+    #[serde(default = "default_sc_mic")]
+    pub mic: String,
+    #[serde(default = "default_sc_speak")]
+    pub speak: String,
+    #[serde(default = "default_sc_panel")]
+    pub panel: String,
+    #[serde(default = "default_sc_settings")]
+    pub settings: String,
+}
+
+fn default_sc_mic() -> String {
+    "ctrl+m".into()
+}
+fn default_sc_speak() -> String {
+    "ctrl+l".into()
+}
+fn default_sc_panel() -> String {
+    "ctrl+b".into()
+}
+fn default_sc_settings() -> String {
+    "ctrl+,".into()
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        Self {
+            mic: default_sc_mic(),
+            speak: default_sc_speak(),
+            panel: default_sc_panel(),
+            settings: default_sc_settings(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -18,6 +56,12 @@ pub struct Settings {
     /// Speak each tutor reply aloud via OS voices (Web Speech API).
     #[serde(default)]
     pub auto_speak: bool,
+    /// Send the speech transcription immediately instead of filling the composer.
+    #[serde(default)]
+    pub auto_send: bool,
+    /// Configurable keyboard shortcuts.
+    #[serde(default)]
+    pub shortcuts: Shortcuts,
     #[serde(default)]
     pub observer_model: Option<String>,
 }
@@ -83,6 +127,8 @@ impl Default for Settings {
             native_language: default_native(),
             microphone_device_id: None,
             auto_speak: false,
+            auto_send: false,
+            shortcuts: Shortcuts::default(),
             observer_model: None,
         }
     }

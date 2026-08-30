@@ -10,8 +10,49 @@ import {
   NATIVE_LANGUAGES,
   TARGET_LANGUAGES,
 } from '../lib/tauri'
+import { comboFromEvent, SHORTCUT_DEFAULTS } from '../lib/keyboard'
 
 type KeyCheck = { state: 'idle' | 'checking' | 'valid' | 'invalid'; detail: string }
+
+/// Shortcut recorder: click to arm, press a combo, Esc clears back to default.
+function ShortcutField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [recording, setRecording] = useState(false)
+  return (
+    <div className="shortcut-field">
+      <span className="shortcut-label">{label}</span>
+      <input
+        data-shortcut-capture={recording || undefined}
+        className="shortcut-input"
+        value={recording ? 'press keys…' : value}
+        readOnly
+        onFocus={() => setRecording(true)}
+        onBlur={() => setRecording(false)}
+        onKeyDown={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (e.key === 'Escape') {
+            onChange(SHORTCUT_DEFAULTS[label.toLowerCase().replace(/[^a-z]/g, '') as keyof typeof SHORTCUT_DEFAULTS] ?? '')
+            ;(e.target as HTMLInputElement).blur()
+            return
+          }
+          if (e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta')
+            return
+          const combo = comboFromEvent(e)
+          onChange(combo)
+          ;(e.target as HTMLInputElement).blur()
+        }}
+      />
+    </div>
+  )
+}
 
 function KeyBadge({ check }: { check: KeyCheck }) {
   if (check.state === 'idle') return null
@@ -269,6 +310,49 @@ export function SettingsModal({
             />
             <span>Auto-speak tutor replies (OS voice, free &amp; offline)</span>
           </label>
+        </div>
+        <div className="form-row check-row">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.auto_send}
+              onChange={(e) => setSettings({ ...settings, auto_send: e.target.checked })}
+            />
+            <span>Auto-send transcriptions (mic → send immediately)</span>
+          </label>
+        </div>
+        <div className="form-row">
+          <label>Keyboard shortcuts (click a field, press the combo; Esc resets to default)</label>
+          <div className="shortcut-grid">
+            <ShortcutField
+              label="Mic"
+              value={settings.shortcuts.mic}
+              onChange={(v) =>
+                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, mic: v } })
+              }
+            />
+            <ShortcutField
+              label="Speak last reply"
+              value={settings.shortcuts.speak}
+              onChange={(v) =>
+                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, speak: v } })
+              }
+            />
+            <ShortcutField
+              label="Toggle analysis panel"
+              value={settings.shortcuts.panel}
+              onChange={(v) =>
+                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, panel: v } })
+              }
+            />
+            <ShortcutField
+              label="Open settings"
+              value={settings.shortcuts.settings}
+              onChange={(v) =>
+                setSettings({ ...settings, shortcuts: { ...settings.shortcuts, settings: v } })
+              }
+            />
+          </div>
         </div>
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>

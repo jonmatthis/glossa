@@ -9,6 +9,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use crate::ai::Provider;
+use std::time::Instant;
 use crate::languages::{iso639, language_display, native_display, overlay};
 use crate::observer;
 use crate::prompts;
@@ -115,6 +116,55 @@ pub fn get_diagnostics() -> Vec<(String, u64)> {
         .iter()
         .map(|(k, v)| (k.to_string(), *v))
         .collect()
+}
+
+// ─── Coach (the sidebar tutor) ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CoachCorrection {
+    /// What the learner actually wrote/said (verbatim fragment).
+    pub said: String,
+    /// What a fluent speaker would say.
+    pub corrected: String,
+    /// Why, in the learner's NATIVE language.
+    pub explanation: String,
+    /// grammar | vocab | word-choice | spelling | other
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CoachFeedback {
+    /// 1-3 warm sentences to the learner. Mostly native language; answers
+    /// questions the learner embedded in their message.
+    #[schemars(length(min = 1))]
+    pub remark: String,
+    /// Target-language fragments the learner produced (verbatim).
+    pub used_target: Vec<String>,
+    /// Native-language fragments they fell back on (verbatim).
+    pub used_native: Vec<String>,
+    /// 0-3 corrections. Empty is valid — a perfect message earns empty.
+    pub corrections: Vec<CoachCorrection>,
+    /// 1-5: would a native speaker understand the message?
+    pub comprehensibility: u8,
+    /// 1-5: grammatical correctness.
+    pub grammar: u8,
+}
+
+impl CoachFeedback {
+    fn validate(&self) -> Option<String> {
+        if self.remark.trim().is_empty() {
+            return Some("remark must not be empty".into());
+        }
+        if !(1..=5).contains(&self.comprehensibility) || !(1..=5).contains(&self.grammar) {
+            return Some("scores must be 1-5".into());
+        }
+        for c in &self.corrections {
+            if c.said.trim().is_empty() || c.corrected.trim().is_empty() {
+                return Some("corrections must cite actual words".into());
+            }
+        }
+        None
+    }
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -288,29 +338,34 @@ fn sanitize_reply(raw: &str) -> String {
 /// Events streamed to the frontend during one guided turn. The reply pass
 /// resolves the turn; the analysis pass lands asynchronously afterwards so
 /// the learner can keep typing while grammar notes are still being prepared.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum GuidedEvent {
-    ReplyDelta { text: String },
-    ReplyDone { reply: String },
-    /// Progressive hydration: emitted the moment ONE analysis sub-call
-    /// finishes; only that section's field is Some. The frontend merges
-    /// sections into the turn as they arrive instead of waiting for the
-    /// slowest call.
-    AnalysisSection {
-        tokens: Option<Vec<GuidedToken>>,
-        translation: Option<String>,
-        mechanics: Option<Vec<Mechanic>>,
-        scaffolds: Option<Scaffolds>,
-    },
-    AnalysisDone { turn: GuidedTurnResult },
-    #[allow(dead_code)]
-    AnalysisFailed { error: String },
-    PlanUpdated {
-        plan: observer::TeachingPlan,
-        profile: observer::Profile,
-    },
-}
+    /// Coach feedback for the learner's latest message (sidebar tutor).
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum GuidedEvent {
+        ReplyDelta { text: String },
+        ReplyDone { reply: String },
+        /// Progressive hydration: emitted the moment ONE analysis sub-call
+        /// finishes; only that section's field is Some. The frontend merges
+        /// sections into the turn as they arrive instead of waiting for the
+        /// slowest call.
+        AnalysisSection {
+            tokens: Option<Vec<GuidedToken>>,
+            translation: Option<String>,
+            mechanics: Option<Vec<Mechanic>>,
+            scaffolds: Option<Scaffolds>,
+        },
+        /// Sidebar-tutor feedback on the learner's latest message.
+        CoachDone { feedback: CoachFeedback },
+        /// The coach call failed after retries — surfaced loudly.
+        CoachFailed { error: String },
+        AnalysisDone { turn: GuidedTurnResult },
+        #[allow(dead_code)]
+        AnalysisFailed { error: String },
+        PlanUpdated {
+            plan: observer::TeachingPlan,
+            profile: observer::Profile,
+        },
+    }
 
 #[tauri::command]
 pub async fn guided_turn(
@@ -320,6 +375,8 @@ pub async fn guided_turn(
     history: Vec<ChatTurn>,
     assist_level: u8,
     greeting: bool,
+    level: Option<String>,
+    topic: Option<String>,
     on_event: Channel<GuidedEvent>,
 ) -> Result<String, String> {
     let settings = state
@@ -340,7 +397,23 @@ pub async fn guided_turn(
     );
     let tln = language_display(&target);
     let native = native_display(&settings.native_language);
-    let cefr = "A2".to_string(); // TODO: onboarding level picker
+    // Learner-selected level (steer row) maps to CEFR for every prompt.
+    let cefr = match level.as_deref() {
+        Some("intermediate") => "B1",
+        Some("advanced") => "C1",
+        _ => "A2",
+    }
+    .to_string();
+    // Topic steering: appended to reply/mechanics/scaffolds directives and
+    // surfaced to the coach.
+    let topic_directive = match topic.as_deref() {
+        Some(t) if !t.trim().is_empty() => format!(
+            "\n- TOPIC STEERING: the learner chose the topic \"{t}\". Steer the \
+             conversation toward it when natural; if the conversation stalls, \
+             offer one question about it."
+        ),
+        _ => String::new(),
+    };
 
     // ── Pass 1: conversational reply (streamed to the UI) ───────────────────
     let directives = {
@@ -349,7 +422,11 @@ pub async fn guided_turn(
             .recent_mechanics
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        observer::directives_block(&plan, &recent)
+        format!(
+            "{}{}",
+            observer::directives_block(&plan, &recent),
+            topic_directive
+        )
     };
     let reply_system = prompts::guided_reply_prompt(
         &target,
@@ -768,6 +845,83 @@ pub async fn guided_turn(
             },
         });
     });
+
+    // ── Coach pass: sidebar feedback on the LEARNER's message ───────────
+    // Skipped on greeting turns (no learner output to coach yet). Runs on
+    // the worker model; failures surface as CoachFailed, never silently.
+    if !greeting {
+        let app_for_coach = app.clone();
+        let coach_channel = on_event.clone();
+        let coach_key = settings.openrouter_key.clone();
+        let coach_model = settings.openrouter_model.clone();
+        let coach_tln = tln.clone();
+        let coach_native = native.clone();
+        let coach_transcript: Vec<String> = history
+            .iter()
+            .rev()
+            .take(12)
+            .rev()
+            .map(|t| {
+                format!(
+                    "{}: {}",
+                    if t.role == "user" { "LEARNER" } else { "NATIVE" },
+                    t.content
+                )
+            })
+            .chain(std::iter::once(format!(
+                "LEARNER: {}",
+                message.trim().to_string()
+            )))
+            .collect();
+        info!("[cmd] coach pass triggered (model={coach_model})");
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let state = app_for_coach.state::<AppState>();
+            let level_notes = state
+                .profile
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .level_notes
+                .clone();
+            let provider = Provider::openrouter(&coach_key, &coach_model);
+            let messages = vec![
+                json!({"role": "system", "content": prompts::coach_system_prompt(&coach_tln, &coach_native)}),
+                json!({"role": "user", "content": prompts::coach_user_message(
+                    &coach_transcript.join("\n"),
+                    message.trim(),
+                    &level_notes,
+                    topic.as_deref(),
+                )}),
+            ];
+            let result = provider
+                .structured_validated::<CoachFeedback, _>(
+                    &messages,
+                    0.3,
+                    "CoachFeedback",
+                    false,
+                    CoachFeedback::validate,
+                )
+                .await;
+            match result {
+                Ok(feedback) => {
+                    info!(
+                        "[cmd] coach done in {:.1}s: corrections={} comp={} grammar={}",
+                        started.elapsed().as_secs_f32(),
+                        feedback.corrections.len(),
+                        feedback.comprehensibility,
+                        feedback.grammar,
+                    );
+                    let _ = coach_channel.send(GuidedEvent::CoachDone { feedback });
+                }
+                Err(e) => {
+                    error!("[cmd] coach FAILED after retries: {e}");
+                    let _ = coach_channel.send(GuidedEvent::CoachFailed {
+                        error: format!("coach: {e}"),
+                    });
+                }
+            }
+        });
+    }
 
     Ok(reply)
 }

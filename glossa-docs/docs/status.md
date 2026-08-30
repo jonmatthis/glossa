@@ -27,6 +27,8 @@ commit"; the whole app tree is untracked).
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (tokens/translation/mechanics/scaffolds) with per-section degradation | `commands.rs:353-508` |
+| **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split) | `commands.rs` coach pass, `coach.md`, Coach tab |
+| **Voice I/O** — mic with 20s-silence auto-stop + optional auto-send; OS-voice auto-speak + 🔊 replay; configurable shortcuts | `GuidedPage.toggleMic`, `lib/speech.ts`, `lib/keyboard.ts` |
 | Observer pass, non-overlapping, plan/profile persisted + learner-visible drawer | `commands.rs:262-351`, `observer.rs` |
 | Anti-repetition (taught ledger + 20-card ring) | `observer.rs::directives_block`, `commands.rs:483-496` |
 | Structured output fallback ladder | `ai.rs::structured_validated` |
@@ -40,10 +42,10 @@ commit"; the whole app tree is untracked).
 
 Ranked roughly by "will bite us next."
 
-### R1 · CEFR is hard-coded A2 for guided chat — **OPEN, biggest pedagogical gap**
-`commands.rs` — `let cefr = "A2".to_string(); // TODO: onboarding level picker`.
-Every prompt tells the model the learner is A2. The Profile's `level_notes`
-exists but nothing feeds it back into worker prompts.
+### R1 · CEFR hard-coding — **coarse picker SHIPPED, adaptive remains open**
+The steer row (level picker) feeds beginner/intermediate/advanced →
+A2/B1/C1 into every prompt. Fine-grained/adaptive leveling (driven by
+`Profile.level_notes` evidence) remains future work.
 
 ### R2 · Contract drift: TS `Settings` missing `observer_model` — **FIXED**
 TS type now mirrors the Rust struct and the Settings modal exposes the
@@ -112,8 +114,11 @@ the app loads no remote content).
   used level (`StoriesPage.tsx`). — **open**
 - `localStorage.glossa_target` can go stale vs. actual settings. — **open**
 - Settings modal requests mic permission as a side effect of opening. — **open**
-- Mic auto-stop, Whisper model, Groq endpoint, upload mime: **centralized
-  as named constants** (H5).
+- Mic auto-stop: **redesigned** — toggle on/off manually; recording
+  auto-stops after 20s of silence (WebAudio RMS detection), not 10s wall-clock.
+  — **fixed**
+- Whisper model, Groq endpoint, upload mime: **centralized as named
+  constants** (H5).
 - `sanitize_reply` markers are Spanish/English-centric — **documented in
   [Future Work](./future-work) ladder notes** (H7).
 - `transcribe_audio` builds a new reqwest client per call (fine at PoC scale).

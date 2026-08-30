@@ -163,14 +163,16 @@ pub fn guided_scaffolds_prompt(
         .unwrap_or(ASSIST_LEVEL_NAMES[3]);
     format!(
         "You prepare scaffolds for a {tln} learner's NEXT message at assist\n\
-         level ({level}). Given the conversation so far, write:\n\
-         - replies: exactly 2 complete sentences in {tln} the learner could\n\
-           plausibly send next\n\
-         - frames: exactly 2 fill-in-the-blank sentences in {tln} using ___\n\
-         - starters: exactly 2 short openers of 2-4 words in {tln}\n\
-         The learner's native language is {native}, but every scaffold stays in {tln}.\n\
-         Use the session focus structures where natural.\n\
-         {directives}\n\
+          level ({level}). Given the conversation so far, write:\n\
+          - replies: exactly 2 complete sentences in {tln} the learner could\n\
+            plausibly send next\n\
+          - frames: exactly 2 fill-in-the-blank sentences in {tln} using ___\n\
+          - starters: exactly 2 short openers of 2-4 words in {tln}\n\
+          EVERY list must contain EXACTLY 2 real, specific items — never empty,\n\
+          never placeholders, never a list with a single item.\n\
+          The learner's native language is {native}, but every scaffold stays in {tln}.\n\
+          Use the session focus structures where natural.\n\
+          {directives}\n\
          Respond with the structured scaffolds you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
@@ -226,5 +228,60 @@ pub fn story_prompt(
         native = native_language_name,
         length = band.2,
         overlay = overlay_section,
+    )
+}
+
+pub fn coach_system_prompt(target_language_name: &str, native_language_name: &str) -> String {
+    format!(
+        "You are the learner's private language coach - invisible to the \
+         conversation partner. The learner is chatting in {tln} with a native \
+         speaker, and you see every message they send. Your job: make them \
+         operate ABOVE their level without breaking the illusion.\n\n\
+         Their messages may mix {tln} and {native} - handle it naturally: \
+         correct the {tln} parts, and if they ask how to say something in \
+         {tln} (even mid-sentence, even in {native}), answer it.\n\n\
+         Analyze ONLY the learner's latest message, in conversation context.\n\n\
+         - remark: 1-3 warm sentences addressed to the learner. Mostly \
+         {native}, with {tln} phrases where instructive. React to what they \
+         attempted and answer any embedded question. Specific, never empty praise.\n\
+         - used_target / used_native: verbatim fragments of their message in \
+         each language (may be empty).\n\
+         - corrections: 0-3, highest value first. said = verbatim fragment of \
+         THEIR message; corrected = what a fluent speaker would say; \
+         explanation in {native} (1-2 sentences). NEVER invent errors.\n\
+         - comprehensibility (1-5): would a native speaker understand the \
+         message? 1 = baffling, 3 = with effort, 5 = effortless.\n\
+         - grammar (1-5): grammatical correctness, same scale.\n\n\
+         Scores are honest - a 5 must be earned. If the message was already \
+         correct, corrections is empty and the remark says so.",
+        tln = target_language_name,
+        native = native_language_name,
+    )
+}
+
+pub fn coach_user_message(
+    transcript: &str,
+    latest_message: &str,
+    level_notes: &str,
+    topic: Option<&str>,
+) -> String {
+    let topic_line = match topic {
+        Some(t) if !t.trim().is_empty() => format!(
+            "\nTOPIC STEERING: the learner picked the topic \"{t}\" — feel free \
+             to suggest follow-ups or small challenges around it.\n"
+        ),
+        _ => String::new(),
+    }
+    .trim_end()
+    .to_string();
+    format!(
+        "CONVERSATION SO FAR:\n{transcript}\n\n\
+         LEARNER'S LATEST MESSAGE (analyze this):\n{latest}\n\n\
+         Learner level notes: {notes}\n{topic}\n\n\
+         Coach them.",
+        transcript = transcript,
+        latest = latest_message,
+        notes = if level_notes.trim().is_empty() { "(none yet)" } else { level_notes },
+        topic = topic_line,
     )
 }

@@ -1,5 +1,6 @@
 import { Component, useEffect, useState, type ReactNode } from 'react'
-import { isTauri } from './lib/tauri'
+import { getSettings, isTauri } from './lib/tauri'
+import { comboFromEvent } from './lib/keyboard'
 import GuidedPage from './pages/GuidedPage'
 import StoriesPage from './pages/StoriesPage'
 import { SettingsModal } from './components/SettingsModal'
@@ -45,6 +46,30 @@ export default function App() {
     () => (settingsOpen ? openOverlay(() => setSettingsOpen(false)) : undefined),
     [settingsOpen]
   )
+
+  // Settings shortcut (configurable, default ctrl+,).
+  useEffect(() => {
+    if (!isTauri) return
+    let shortcuts = { settings: 'ctrl+,' }
+    let alive = true
+    void getSettings()
+      .then((s) => {
+        if (alive && s.shortcuts?.settings) shortcuts = s.shortcuts
+      })
+      .catch(() => {})
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return
+      if (comboFromEvent(e) === shortcuts.settings) {
+        e.preventDefault()
+        setSettingsOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      alive = false
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
 
   useEffect(() => {
     if (!isTauri) {
