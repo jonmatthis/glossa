@@ -319,7 +319,7 @@ impl Provider {
         if content.is_empty() {
             warn!(
                 "[ai] EMPTY content; full message object: {}",
-                body["choices"][0]["message"].to_string()
+                body["choices"][0]["message"]
             );
             return Err("API returned an empty response".into());
         }
@@ -445,4 +445,67 @@ impl Provider {
         );
         Err(format!("structured output failed after retries: {last_error}"))
     }
+}
+
+#[cfg(test)]
+mod tests {
+use super::*;
+use serde_json::json;
+
+// Regression: inline_defs looked only for `$defs`, but schemars 0.8 emits
+// `definitions` — the function was a silent no-op and Gemini 400'd every
+// schema with nested refs.
+#[test]
+fn inline_defs_resolves_definitions() {
+    let schema = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+            "GuidedToken": { "type": "object", "properties": { "text": { "type": "string" } } }
+        },
+        "type": "object",
+        "properties": {
+            "tokens": { "type": "array", "items": { "$ref": "#/definitions/GuidedToken" } }
+        }
+    });
+    let out = inline_defs(schema);
+    let items = &out["properties"]["tokens"]["items"];
+    assert!(items.get("$ref").is_none(), "ref must be inlined");
+    assert_eq!(items["properties"]["text"]["type"], "string");
+    assert!(out.get("definitions").is_none(), "definitions map stripped");
+}
+
+#[test]
+fn inline_defs_handles_dollar_defs() {
+    let schema = json!({
+        "$defs": { "Item": { "type": "object" } },
+        "properties": { "x": { "$ref": "#/$defs/Item" } }
+    });
+    let out = inline_defs(schema);
+    assert!(out["properties"]["x"].get("$ref").is_none());
+    assert_eq!(out["properties"]["x"]["type"], "object");
+}
+
+#[test]
+fn inline_defs_resolves_transitive_refs() {
+    let schema = json!({
+        "definitions": {
+            "A": { "$ref": "#/definitions/B" },
+            "B": { "type": "string" }
+        },
+        "properties": { "x": { "$ref": "#/definitions/A" } }
+    });
+    let out = inline_defs(schema);
+    assert_eq!(out["properties"]["x"]["type"], "string");
+}
+
+#[test]
+fn inline_defs_keeps_unrelated_content() {
+    let schema = json!({
+        "definitions": { "B": { "type": "string" } },
+        "type": "object",
+        "properties": { "y": { "type": "number" } }
+    });
+    let out = inline_defs(schema);
+    assert_eq!(out["properties"]["y"]["type"], "number");
+}
 }

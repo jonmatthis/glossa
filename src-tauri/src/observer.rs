@@ -95,6 +95,7 @@ impl TeachingPlan {
 
 /// Durable, cross-session knowledge about the learner.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Default)]
 pub struct Profile {
     /// 2-3 sentence summary of who the learner is and where they are.
     #[serde(default)]
@@ -119,19 +120,6 @@ pub struct Profile {
     pub sessions: u32,
 }
 
-impl Default for Profile {
-    fn default() -> Self {
-        Self {
-            about: String::new(),
-            level_notes: String::new(),
-            strengths: Vec::new(),
-            weaknesses: Vec::new(),
-            interests: Vec::new(),
-            long_term_errors: Vec::new(),
-            sessions: 0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ObserverOutput {

@@ -65,6 +65,19 @@ is how we ended up with ten half-supported languages.
    techniques above; Japanese reuses the Mandarin segmentation work
    (lindera/JMdict).
 
+## Per-language text dialects (ladder notes)
+
+Several "pure code" text helpers are currently **Spanish/European-centric**
+and must be extended per rung, not assumed universal:
+
+- Sentence splitting + reply sanitization markers use
+  `[.!?…]` / es+en leaked-note markers (`sentences.ts`, `sanitize_reply`).
+- Token join spacing (`token-spacing.ts`) is space-delimited-logic; Arabic
+  adds RTL (use logical CSS properties + `dir` attributes), Chinese/Japanese
+  need **no spaces between tokens** and CJK-aware segmentation.
+- Keyboard/voice input hints (`lang`, STT language codes) come from the
+  language table already — keep that as the single source.
+
 ## Migration bites
 
 1. Bundle `wordform → {lemma, POS, glosses, freq}` for es-ES; replace the

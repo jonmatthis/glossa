@@ -88,6 +88,30 @@ impl Default for Settings {
     }
 }
 
+/// Mask a secret for display/IPC: keep only the last 4 chars. A masked
+/// value round-trips safely — save_settings treats an unchanged mask as
+/// "keep the stored key".
+pub fn mask(key: &str) -> String {
+    if key.is_empty() {
+        return String::new();
+    }
+    let tail: String = key
+        .chars()
+        .skip(key.chars().count().saturating_sub(4))
+        .collect();
+    format!("••••{tail}")
+}
+
+impl Settings {
+    /// IPC-safe copy: secrets replaced by their masked form.
+    pub fn masked(&self) -> Settings {
+        let mut s = self.clone();
+        s.openrouter_key = mask(&self.openrouter_key);
+        s.groq_key = mask(&self.groq_key);
+        s
+    }
+}
+
 fn settings_path(dir: &Path) -> std::path::PathBuf {
     dir.join("settings.json")
 }
@@ -137,4 +161,32 @@ pub fn persist(dir: &Path, settings: &Settings) -> Result<(), String> {
         .and_then(|raw| {
             std::fs::write(path, raw).map_err(|e| format!("settings write failed: {e}"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+use super::*;
+
+#[test]
+fn mask_hides_everything_but_tail() {
+    assert_eq!(mask(""), "");
+    let m = mask("sk-or-v1-abcd1234");
+    assert!(m.starts_with("\u{2022}\u{2022}\u{2022}\u{2022}"));
+    assert!(m.ends_with("1234"));
+    assert!(!m.contains("sk-or"));
+}
+
+#[test]
+fn migrate_moves_legacy_defaults_to_current() {
+    for legacy in LEGACY_DEFAULT_MODELS {
+        let mut s = Settings::default();
+        s.openrouter_model = legacy.to_string();
+        migrate(&mut s);
+        assert_eq!(s.openrouter_model, default_model());
+    }
+    // The current default is stable under migration.
+    let mut cur = Settings::default();
+    migrate(&mut cur);
+    assert_eq!(cur.openrouter_model, default_model());
+}
 }

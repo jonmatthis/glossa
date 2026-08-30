@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { clearLogs, getLogs, subscribeLogs, type LogEntry } from '../lib/log'
 import { getDiagnostics } from '../lib/tauri'
+import { openOverlay } from '../lib/back'
 
 const COLORS: Record<string, string> = {
   debug: 'var(--faint-d)',
@@ -19,6 +20,8 @@ export function LogsOverlay() {
   const scroller = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => subscribeLogs((e) => setEntries([...e])), [])
+  // Android back closes the panel instead of exiting the app.
+  useEffect(() => (open ? openOverlay(() => setOpen(false)) : undefined), [open])
   useEffect(() => {
     if (open) {
       void getDiagnostics()

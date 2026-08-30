@@ -1,6 +1,6 @@
-/// Prompt builders for Glossa, composed from shared blocks (persona,
-/// mandatory rules) plus per-surface guidance — one source of truth for the
-/// rules, ported from the FreeLingo prompt library.
+//! Prompt builders for Glossa, composed from shared blocks (persona,
+//! mandatory rules) plus per-surface guidance — one source of truth for the
+//! rules, ported from the FreeLingo prompt library.
 
 use crate::languages::overlay;
 

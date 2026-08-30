@@ -143,7 +143,17 @@ export function SettingsModal({
   if (!settings) {
     return (
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal"
+          onClick={(e) => e.stopPropagation()}
+          onFocusCapture={(e) => {
+            // With the keyboard open, keep the focused field visible.
+            const t = e.target as HTMLElement
+            if (t.tagName === 'INPUT' || t.tagName === 'SELECT') {
+              t.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+            }
+          }}
+        >
           <p className="center-note">Loading…</p>
         </div>
       </div>

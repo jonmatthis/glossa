@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Level, Story } from '../types'
 import { isTauri, logError, logInfo } from '../lib/tauri'
 import { needsSpaceBetween } from '../lib/token-spacing'
-import { GlossPopup, type PopupState } from '../components/GlossPopup'
+import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPopup'
+import { openOverlay } from '../lib/back'
 
 const STORAGE_PREFIX = 'glossa_story_'
 const LEVELS: Level[] = ['beginner', 'intermediate', 'advanced']
@@ -61,18 +62,22 @@ export default function StoriesPage() {
   }, [])
 
   const closePopup = useCallback(() => setPopup(null), [])
+  // Android back closes the popup instead of exiting the app.
+  useEffect(
+    () => (popup ? openOverlay(closePopup) : undefined),
+    [popup, closePopup]
+  )
 
   function handleWordClick(
     token: { text: string; gloss: string | null },
     event: React.MouseEvent<HTMLSpanElement>
   ) {
     if (!token.gloss) return
-    const rect = event.currentTarget.getBoundingClientRect()
+    const pos = popupAnchor(event.currentTarget)
     setPopup((prev) =>
       prev && prev.text === token.gloss ? null : {
         text: token.gloss as string,
-        x: rect.left + rect.width / 2,
-        y: Math.max(rect.top - 8, 56),
+        ...pos,
       }
     )
   }

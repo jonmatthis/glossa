@@ -1,10 +1,10 @@
 import { Component, useEffect, useState, type ReactNode } from 'react'
-import type { Settings } from './types'
 import { isTauri } from './lib/tauri'
 import GuidedPage from './pages/GuidedPage'
 import StoriesPage from './pages/StoriesPage'
 import { SettingsModal } from './components/SettingsModal'
 import { LogsOverlay } from './components/LogsOverlay'
+import { openOverlay } from './lib/back'
 
 type Page = 'guided' | 'stories'
 
@@ -38,8 +38,13 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
 export default function App() {
   const [page, setPage] = useState<Page>('guided')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [, setSettings] = useState<Settings | null>(null)
   const [showNotTauri, setShowNotTauri] = useState(false)
+
+  // Android back closes the Settings modal instead of exiting the app.
+  useEffect(
+    () => (settingsOpen ? openOverlay(() => setSettingsOpen(false)) : undefined),
+    [settingsOpen]
+  )
 
   useEffect(() => {
     if (!isTauri) {
@@ -48,10 +53,7 @@ export default function App() {
     }
     void import('./lib/tauri').then(({ getSettings }) =>
       getSettings()
-        .then((s) => {
-          setSettings(s)
-          localStorage.setItem('glossa_target', s.target_language)
-        })
+        .then((s) => localStorage.setItem('glossa_target', s.target_language))
         .catch(() => {})
     )
   }, [])
@@ -96,14 +98,27 @@ export default function App() {
             <b>npm run tauri dev</b> from the glossa folder — the interface
             needs the Rust core for AI calls, storage, and speech-to-text.
           </div>
-        ) : page === 'guided' ? (
-          <PageBoundary>
-            <GuidedPage />
-          </PageBoundary>
         ) : (
-          <PageBoundary>
-            <StoriesPage />
-          </PageBoundary>
+          <>
+            {/* Both pages stay MOUNTED — unmounting GuidedPage on tab switch
+                destroyed the conversation. Hidden via CSS, not unmounted. */}
+            <div
+              className={`page-holder ${page === 'guided' ? '' : 'hidden'}`}
+              aria-hidden={page !== 'guided'}
+            >
+              <PageBoundary>
+                <GuidedPage />
+              </PageBoundary>
+            </div>
+            <div
+              className={`page-holder ${page === 'stories' ? '' : 'hidden'}`}
+              aria-hidden={page !== 'stories'}
+            >
+              <PageBoundary>
+                <StoriesPage />
+              </PageBoundary>
+            </div>
+          </>
         )}
       </div>
 
@@ -113,7 +128,6 @@ export default function App() {
         <SettingsModal
           onClose={() => setSettingsOpen(false)}
           onSaved={(s) => {
-            setSettings(s)
             localStorage.setItem('glossa_target', s.target_language)
             setSettingsOpen(false)
           }}

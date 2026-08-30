@@ -40,34 +40,29 @@ commit"; the whole app tree is untracked).
 
 Ranked roughly by "will bite us next."
 
-### R1 · CEFR is hard-coded A2 for guided chat
-`commands.rs:195` — `let cefr = "A2".to_string(); // TODO: onboarding level picker`.
-Every prompt (persona, mechanics) tells the model the learner is A2
-regardless of reality. The Profile's `level_notes` exists but nothing feeds
-it back into the worker prompts. **This is the biggest pedagogical gap:**
-an intermediate learner still gets A2 treatment.
+### R1 · CEFR is hard-coded A2 for guided chat — **OPEN, biggest pedagogical gap**
+`commands.rs` — `let cefr = "A2".to_string(); // TODO: onboarding level picker`.
+Every prompt tells the model the learner is A2. The Profile's `level_notes`
+exists but nothing feeds it back into worker prompts.
 
 ### R2 · Contract drift: TS `Settings` missing `observer_model` — **FIXED**
 TS type now mirrors the Rust struct and the Settings modal exposes the
 observer model; saving no longer silently resets it.
 
-### R3 · Nothing is committed / no CI / no tests
-One commit ("Initial commit"); the entire `src/`, `src-tauri/`, and docs
-trees are untracked. Zero tests (Rust or TS), no lint config, no GitHub
-Actions. Any refactor is currently blind.
+### R3 · Testing/CI — **improved, CI still missing**
+Unit tests now exist (6 Rust + 12 vitest covering the pure functions that
+bit us; model bench harness for LLM candidate evaluation). Still missing:
+CI pipeline (clippy + tsc + vitest + docs build), lint config.
 
 ### R4 · Conversation history not persisted
 Turns live only in React state. Continuity across restarts is carried solely
 by plan/profile. A `session.json` (or SQLite) with the turn log is the
 missing piece for "resume where I left off" and for future SRS/analytics.
 
-### R5 · README overstates key isolation
-README claims keys "never shipped to the webview." In fact `get_settings`
-returns the full Settings **including key material** to the frontend
-(`commands.rs:22-29`); GuidedPage and SettingsModal both receive it. Keys
-never leave the machine, but they do cross the IPC boundary. Either fix the
-claim or fix the code (return masked keys; accept keys only via
-`save_settings`).
+### R5 · README overstates key isolation — **FIXED**
+Keys no longer travel to the webview at all: `get_settings` returns masked
+values (`••••last4`), `save_settings` treats an unchanged mask as
+"keep stored key", and `validate_key` resolves masks server-side.
 
 ### R6 · One language per install, documents not namespaced
 `plan.json` / `profile.json` / story caches are not keyed by target
@@ -86,13 +81,11 @@ language-switching a first-class flow.
 Field deleted from the Rust wire type, TS type, and the "Grammar spotted"
 render block. (Habla·ES leftover; the mechanic cards fully supersede it.)
 
-### R9 · Mobile-readiness gaps (pre-scaffold)
-`gen/` contains only schemas — `tauri android init` / `tauri ios init` have
-not been run. Desktop capability file only; mic permissions
-(`RECORD_AUDIO`, `NSMicrophoneUsageDescription`) unconfigured; STT assumes
-webm (`audio.webm` hardcoded, `commands.rs:672`) while iOS produces mp4/aac;
-desktop-only CSS (fixed split pane, 1200×800 window). Details in
-[Platforms](./platforms).
+### R9 · Mobile — **Android SHIPPED**, iOS unscaffolded
+Android builds + runs (emulator dev loop + sideload APK, see
+[Platforms](./platforms)); manifest carries mic permissions, keyboard
+resize fixed, STT format verified webm/opus. Open: iOS scaffolding
+(needs Mac + Apple dev account; STT upload type must switch to mp4/aac).
 
 ### R10 · Reply `max_tokens: 600` can truncate
 Streaming replies cap at 600 output tokens with a bump to 1200 only on the
@@ -100,36 +93,65 @@ reasoning-param retry path (`ai.rs:114,161`). Advanced-level replies or
 longer greetings risk silent truncation. Consider raising or making it
 level-aware.
 
-### R11 · Frontend duplicates language data
-`lib/tauri.ts:37-60` re-lists the languages from `languages.rs` (fine), but
-`GuidedPage.tsx:326-332` *also* re-implements display names with its own
-ad-hoc mapping ("es-ES" → "Spanish", else `split('-')[0].toUpperCase()`),
-which yields e.g. "EN-GB" as a header. Route display names through the
-shared list.
+### R11 · Frontend duplicates language data — **largely fixed**
+Display names now come from the shared TS list; Rust remains the deep
+authority (overlays, iso639). Full IPC-sourcing deferred until the ladder
+adds a second language.
 
 ### R12 · Plaintext API keys
 Keys sit in `settings.json` in the config dir (chmod-unguarded on Windows).
 Acceptable for a PoC; the roadmap answer is OS keychain via a Tauri plugin
 (`tauri-plugin-stronghold` or keyring crate), with plaintext as fallback.
 
-### R13 · CSP is null
-`tauri.conf.json` → `app.security.csp: null`. Fine for dev; should be set
-before any public distribution.
+### R13 · CSP is null — **FIXED**
+Strict CSP in `tauri.conf.json` per Tauri docs (self + ipc + asset only —
+the app loads no remote content).
 
-### R14 · Assorted sharp edges
+### R14 · Assorted sharp edges — **partially fixed**
 - Story cache restore only looks up the `beginner` slot regardless of last
-  used level (`StoriesPage.tsx:58`).
-- `localStorage.glossa_target` can go stale vs. actual settings if settings
-  change outside the app.
-- Settings modal requests mic permission as a side effect of opening (to
-  enumerate devices, `SettingsModal.tsx:47`).
-- Mic auto-stop hardcoded at 10s (`GuidedPage.tsx:311`).
-- `sanitize_reply` markers are Spanish/English-centric (`commands.rs:142`).
-- Whisper model + Groq endpoint hardcoded (`commands.rs:675`).
+  used level (`StoriesPage.tsx`). — **open**
+- `localStorage.glossa_target` can go stale vs. actual settings. — **open**
+- Settings modal requests mic permission as a side effect of opening. — **open**
+- Mic auto-stop, Whisper model, Groq endpoint, upload mime: **centralized
+  as named constants** (H5).
+- `sanitize_reply` markers are Spanish/English-centric — **documented in
+  [Future Work](./future-work) ladder notes** (H7).
 - `transcribe_audio` builds a new reqwest client per call (fine at PoC scale).
-- Story "exactly 2" scaffolds are validated only as non-empty.
-- Docs site config has placeholder URL (`url: https://github.com`, FreeMoCap
-  Discord footer) to be personalized.
+- Story scaffolds: shape + emptiness now enforced at the schema level
+  (`minItems`) — fixed by the flat-schema rework.
+- Docs site config has placeholder URL / FreeMoCap footer — **open**
+  (cosmetic).
+
+## Audit 2026-08-30 — robustness & mobile pass (in progress)
+
+Full audit findings; worked chunk by chunk, this table is the tracker.
+
+| ID | Finding | Status |
+|---|---|---|
+| B1 | Observer `observer_running` flag stuck `true` forever if the observer task panicked → observer silently disabled permanently. Fixed with a panic-safe RAII guard. | ✅ |
+| B2 | Tab switch (Guided↔Stories) unmounted GuidedPage and destroyed the conversation. Both pages now stay mounted; inactive page is `display:none`. | ✅ |
+| B3 | Android back button exits app instead of closing topmost overlay (popup/drawer/panel). Needs overlay-stack design. | ⬜ |
+| M1 | iOS auto-zoom on focus: inputs < 16px font (`.field` 14px, Settings 13.5px). Fix: 16px inputs. | ✅ 16px on ≤860px viewports |
+| M2 | Logs fab (fixed bottom-left) overlaps the composer on mobile. Re-dock. | ✅ docked beside the topbar gear |
+| M3 | 🔊 button (absolute top-right of bubble) can overlap reply text. | ✅ `with-speak` reserves right padding |
+| M4 | Gloss popups clip at viewport edges (x not clamped) — Stories + Guided. | ✅ shared `popupAnchor` clamps x |
+| M5 | Plan drawer lacks safe-area bottom padding. | ✅ plus: the drawer had NO CSS at all (never styled) — full drawer styles added |
+| M6 | Input semantics: chat input missing `lang` (keyboard predictions), `enterkeyhint`, autocapitalize tuning; Settings inputs need scrollIntoView on keyboard open. | ✅ `lang`/`enterKeyHint`/`autoCorrect`/`spellCheck` on chat input; focus-scroll on modal |
+| M7 | Missing `overscroll-behavior: contain` on scrollers; no tap-highlight policy. | ✅ |
+| P2 | Diagnostic logs (`[viewport]`, `[mic] peak`) at info level → downgrade to debug. | ✅ |
+| S1 | CSP null → strict CSP per Tauri docs (we load no remote content; near-free). | ✅ strict CSP in tauri.conf.json |
+| S2 | `get_settings` ships API keys to the webview → masked-keys + save-only. | ✅ masked round-trip: `••••last4`; unchanged masks keep stored keys; validation resolves masks |
+| S3 | Keys plaintext on disk → keychain/stronghold later. | ⬜ future |
+| H1 | Language lists duplicated (Rust, TS constants, ad-hoc display map in GuidedPage). Single source via IPC. | 🟡 display map now uses the shared TS list; full IPC sourcing deferred |
+| H2 | GuidedPage duplication: empty-assistant literal ×2, normalizeDocs call sites ×3 → helpers. | ✅ `emptyAssistant()` + `normalizeDocs` moved to `lib/normalize.ts` |
+| H3 | App.tsx dead `settings` value + `localStorage.glossa_target` second source of truth. | ⬜ |
+| H4 | GuidedPage ~990 lines → split components (optional refactor). | ⬜ |
+| H5 | Hardcoded constants scattered: mic 10s auto-stop, Whisper model, Groq endpoint, webm mime. | ⬜ |
+| H6 | `schema_dump` debug bin builds in all profiles — gate or delete. | ⬜ |
+| H7 | `sanitize_reply` markers es/en-centric — fold into future-work ladder notes. | ⬜ |
+| E1 | No unit tests for the pure functions that bit us: `inline_defs`, `normalizeDocs`, `token-spacing`, `groupSentences/splitSentences`. | ✅ 6 Rust tests (inline_defs regression, mask, migrate) + 12 vitest cases (`npm test`) |
+| E2 | No CI: clippy + tsc + docs build gate. | ✅ `.github/workflows/ci.yml` (clippy -D warnings, cargo test --lib, vitest + tsc + vite, docs build) |
+| D1 | status.md R-list drifted after the week's fixes — refresh at end of audit. | ✅ |
 
 ## What does not exist yet (explicitly)
 

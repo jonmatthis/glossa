@@ -16,6 +16,14 @@ use crate::settings;
 use crate::settings::Settings;
 use crate::AppState;
 
+// STT (Groq Whisper) — central here so a provider/model switch is one edit.
+const GROQ_STT_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
+const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
+/// Android WebView emits webm/opus; iOS emits mp4/aac — the upload type must
+/// follow the platform when the ladder reaches iOS.
+const STT_UPLOAD_MIME: &str = "audio/webm";
+const STT_UPLOAD_NAME: &str = "audio.webm";
+
 // ─── API key validation ──────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,8 +36,27 @@ pub struct KeyStatus {
 /// for chat keys, Groq's model list for STT keys. Never logs or returns the
 /// key itself.
 #[tauri::command]
-pub async fn validate_key(provider: String, key: String) -> Result<KeyStatus, String> {
-    let key = key.trim().to_string();
+pub async fn validate_key(
+    state: State<'_, AppState>,
+    provider: String,
+    key: String,
+) -> Result<KeyStatus, String> {
+    // A masked value from the UI means "validate the stored key".
+    let mut key = key.trim().to_string();
+    if key.starts_with("••••") {
+        let stored = state
+            .settings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        key = match provider.as_str() {
+            "openrouter" => stored.openrouter_key,
+            "groq" => stored.groq_key,
+            other => return Err(format!("unknown provider: {other}")),
+        }
+        .trim()
+        .to_string();
+    }
     if key.is_empty() {
         return Ok(KeyStatus {
             valid: false,
@@ -95,11 +122,13 @@ pub fn get_diagnostics() -> Vec<(String, u64)> {
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     info!("[cmd] get_settings");
+    // Secrets travel masked: the webview never receives raw key material.
     Ok(state
         .settings
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .clone())
+        .clone()
+        .masked())
 }
 
 #[tauri::command]
@@ -108,6 +137,19 @@ pub fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Resu
     // key makes providers report "Missing Authentication header".
     settings.openrouter_key = settings.openrouter_key.trim().to_string();
     settings.groq_key = settings.groq_key.trim().to_string();
+    // Masked values round-tripping from the UI mean "keep the stored key".
+    let stored = state
+        .settings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if !stored.openrouter_key.is_empty() && settings.openrouter_key == settings::mask(&stored.openrouter_key)
+    {
+        settings.openrouter_key = stored.openrouter_key;
+    }
+    if !stored.groq_key.is_empty() && settings.groq_key == settings::mask(&stored.groq_key) {
+        settings.groq_key = stored.groq_key;
+    }
     info!(
         "[cmd] save_settings: target={} native={} model={}",
         settings.target_language,
@@ -196,6 +238,8 @@ pub struct MechanicsOut {
 /// wrapper made models return the inner object at the top level. Flat shape
 /// + schema-level minItems = models comply. `Scaffolds` below stays the
 /// public turn shape.
+/// The `min = 1` schema constraints mean constrained providers cannot emit
+/// empty lists; the validate() closure remains as the sense-checker.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScaffoldsOut {
     #[schemars(length(min = 1))]
@@ -401,6 +445,19 @@ pub async fn guided_turn(
         tokio::spawn(async move {
             let obs_started = std::time::Instant::now();
             let state = app_for_observer.state::<AppState>();
+
+            // RAII: the running flag MUST clear when this task ends — panic,
+            // early return, whatever. A stuck flag permanently and silently
+            // disables the observer (this exact shape of bug happened when a
+            // panic killed an earlier observer task).
+            struct ClearRunning<'a>(&'a std::sync::Mutex<bool>);
+            impl Drop for ClearRunning<'_> {
+                fn drop(&mut self) {
+                    *self.0.lock().unwrap_or_else(|p| p.into_inner()) = false;
+                }
+            }
+            let _running_guard = ClearRunning(&state.observer_running);
+
             let (plan_snapshot, profile_snapshot, mechanics) = {
                 let plan = state.plan.lock().unwrap_or_else(|p| p.into_inner());
                 let profile = state.profile.lock().unwrap_or_else(|p| p.into_inner());
@@ -446,11 +503,7 @@ pub async fn guided_turn(
                     );
                 }
             }
-            // Free the slot — the next turn can run its own observer pass.
-            *state
-                .observer_running
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()) = false;
+            // Slot freed by _running_guard's Drop — panic-safe.
         });
     }
 
@@ -506,22 +559,15 @@ pub async fn guided_turn(
                         |t: &TokensOut| {
                             if t.tokens.is_empty() {
                                 Some("tokens must not be empty".into())
-                            } else if let Some(bad) = t
+                            } else { t
                                 .tokens
                                 .iter()
-                                .find(|tok| tok.text.chars().count() > 48)
-                            {
-                                // A "token" spanning a whole sentence means the model
-                                // leaked reasoning into content instead of splitting.
-                                Some(format!(
+                                .find(|tok| tok.text.chars().count() > 48).map(|bad| format!(
                                     "each token must be ONE word with its punctuation attached \
                                      ('{}...' is far too long). Split the reply word by word and \
                                      return only the structured tokenization, no explanations.",
                                     bad.text.chars().take(24).collect::<String>()
-                                ))
-                            } else {
-                                None
-                            }
+                                )) }
                         },
                     )
                     .await;
@@ -816,7 +862,7 @@ pub async fn generate_story(
             |st| st.validate(),
         )
         .await
-        .map(|story| {
+        .inspect(|story| {
             let tokens: usize = story.paragraphs.iter().map(|p| p.tokens.len()).sum();
             info!(
                 "[cmd] generate_story done in {:.1}s: paragraphs={} tokens={}",
@@ -824,7 +870,6 @@ pub async fn generate_story(
                 story.paragraphs.len(),
                 tokens,
             );
-            story
         })
         .map_err(|e| {
             error!(
@@ -885,11 +930,11 @@ pub async fn transcribe_audio(
     let target = settings.target_language.clone();
     let language = iso639(&target);
     let file_part = reqwest::multipart::Part::bytes(audio)
-        .file_name("audio.webm")
-        .mime_str("audio/webm")
+        .file_name(STT_UPLOAD_NAME)
+        .mime_str(STT_UPLOAD_MIME)
         .map_err(|e| e.to_string())?;
     let form = reqwest::multipart::Form::new()
-        .text("model", "whisper-large-v3-turbo")
+        .text("model", GROQ_STT_MODEL)
         .text("language", language)
         .text("response_format", "json")
         .part("file", file_part);
@@ -899,7 +944,7 @@ pub async fn transcribe_audio(
         .build()
         .map_err(|e| e.to_string())?;
     let response = client
-        .post("https://api.groq.com/openai/v1/audio/transcriptions")
+        .post(GROQ_STT_URL)
         .bearer_auth(settings.groq_key.trim())
         .multipart(form)
         .send()
@@ -912,10 +957,10 @@ pub async fn transcribe_audio(
         .await
         .map_err(|e| format!("invalid transcription response: {e}"))?;
     if !status.is_success() {
-        error!("[cmd] transcription API error {status}: {}", body.to_string());
+        error!("[cmd] transcription API error {status}: {}", body);
         return Err(format!(
             "transcription API error {status}: {}",
-            body.to_string()
+            body
         ));
     }
     let text = body["text"].as_str().unwrap_or_default().trim().to_string();

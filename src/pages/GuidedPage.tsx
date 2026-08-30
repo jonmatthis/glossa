@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import type {
   AssistLevel,
@@ -10,9 +10,12 @@ import type {
   Scaffolds,
   TeachingPlan,
 } from '../types'
-import { GlossPopup, type PopupState } from '../components/GlossPopup'
-import { getPlan, getSettings, isTauri, transcribeAudio } from '../lib/tauri'
+import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPopup'
+import { getPlan, getSettings, isTauri, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
+import { openOverlay } from '../lib/back'
 import { loadVoices, speak, speechSupported, stopSpeaking } from '../lib/speech'
+import { groupSentences, splitSentences } from '../lib/sentences'
+import { normalizeDocs } from '../lib/normalize'
 import { logDebug, logError, logInfo, logWarn } from '../lib/log'
 import { needsSpaceBetween } from '../lib/token-spacing'
 
@@ -28,6 +31,7 @@ const ASSIST_STORAGE_KEY = 'glossa_assist'
 const BREAK_STORAGE_KEY = 'glossa_break'
 const FOCUS_STORAGE_KEY = 'glossa_focus'
 const MOBILE_QUERY = '(max-width: 860px)'
+const MIC_AUTO_STOP_MS = 10_000
 const ASSIST_LABELS: Record<AssistLevel, string> = {
   0: 'Immersion',
   1: 'Light',
@@ -41,56 +45,139 @@ const ASSIST_HINTS: Record<AssistLevel, string> = {
   3: 'Full translation shown. Tap a whole reply to send it — hold a conversation before you can build one.',
 }
 
-// Tokens carry their trailing punctuation ("hoy?"), so a token ending in
-// terminal punctuation closes its sentence.
-const TERMINAL_PUNCT = /[.!?…]$/
-
-function groupSentences(tokens: GuidedToken[]): GuidedToken[][] {
-  const sentences: GuidedToken[][] = [[]]
-  for (const tok of tokens) {
-    sentences[sentences.length - 1].push(tok)
-    if (TERMINAL_PUNCT.test(tok.text)) sentences.push([])
-  }
-  if (sentences[sentences.length - 1].length === 0) sentences.pop()
-  return sentences
-}
-
-// Split a translation into sentences the same way, so index i of the
-// translation aligns with sentence i of the token stream. If the counts
-// disagree, callers fall back to the full translation.
-function splitSentences(text: string): string[] {
-  return (text.match(/[^.!?…]+[.!?…]*/g) ?? []).map((s) => s.trim()).filter(Boolean)
-}
-
 // Module-scoped so remounts (HMR, tab switches) can never re-fire the
 // greeting pipeline — each greeting is 6 AI calls.
 let sessionGreeted = false
 
-// Defensive normalization: plan/profile cross the IPC boundary; a missing
-// array must never crash a render.
-function normalizeDocs(plan: TeachingPlan, profile: Profile) {
+/// A turn whose reply is known but analysis hasn't landed yet.
+function emptyAssistant(reply: string): GuidedTurnResult {
   return {
-    plan: {
-      session_focus: plan?.session_focus ?? [],
-      recurring_errors: plan?.recurring_errors ?? [],
-      vocab_recycle: plan?.vocab_recycle ?? [],
-      avoid: plan?.avoid ?? [],
-      learner_interests: plan?.learner_interests ?? [],
-      energy_read: plan?.energy_read ?? '',
-      correction_budget: plan?.correction_budget ?? 1,
-      taught_ledger: plan?.taught_ledger ?? [],
-    },
-    profile: {
-      about: profile?.about ?? '',
-      level_notes: profile?.level_notes ?? '',
-      strengths: profile?.strengths ?? [],
-      weaknesses: profile?.weaknesses ?? [],
-      interests: profile?.interests ?? [],
-      long_term_errors: profile?.long_term_errors ?? [],
-      sessions: profile?.sessions ?? 0,
-    },
+    reply,
+    translation: null,
+    tokens: [],
+    mechanics: [],
+    scaffolds: { replies: [], frames: [], starters: [] },
+    errors: [],
   }
 }
+
+interface TurnViewProps {
+  turn: Turn
+  focused: boolean
+  ttsReady: boolean
+  assist: AssistLevel
+  onBubbleTap: (id: number) => void
+  onSpeak: (text: string) => void
+  onPopup: React.Dispatch<React.SetStateAction<PopupState | null>>
+}
+
+/// Memoized: during streaming, every delta re-renders only the turn that
+/// changed — not the whole conversation.
+const TurnView = memo(function TurnView({
+  turn,
+  focused,
+  ttsReady,
+  assist,
+  onBubbleTap,
+  onSpeak,
+  onPopup,
+}: TurnViewProps) {
+  const assistant = turn.assistant
+  const sentences = useMemo(
+    () => (assistant && assistant.tokens.length > 0 ? groupSentences(assistant.tokens) : []),
+    [assistant]
+  )
+  const tapToken = (
+    tok: GuidedToken,
+    si: number,
+    e: React.MouseEvent<HTMLSpanElement>
+  ) => {
+    if (!assistant) return
+    const pos = popupAnchor(e.currentTarget)
+    const show = (text: string) =>
+      onPopup((prev) => (prev && prev.text === text ? null : { text, ...pos }))
+    if (tok.gloss) {
+      // Below Guided level, glosses are not rendered inline — tap to see one.
+      if (assist < 2) show(tok.gloss)
+      return
+    }
+    // Gloss-less (punctuation) token: reveal that sentence's translation.
+    if (assist >= 3 || !assistant.translation) return
+    const parts = splitSentences(assistant.translation)
+    show(
+      parts.length === sentences.length
+        ? parts[si] ?? assistant.translation
+        : assistant.translation
+    )
+  }
+  const bubbleTap = () => {
+    // Pin this turn AND surface its analysis — on mobile the panel is
+    // usually collapsed, so a tap should reveal it.
+    onBubbleTap(turn.id)
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {turn.user && <div className="msg me">{turn.user}</div>}
+      {assistant && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={bubbleTap}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') bubbleTap()
+          }}
+          className={`msg bot ${focused ? 'focused' : ''}${ttsReady ? ' with-speak' : ''}`}
+        >
+          {assistant.tokens.length > 0 ? (
+            <span className="line">
+              {sentences.flatMap((sentence, si) =>
+                sentence.map((tok, ti) => {
+                  const canGloss = !!tok.gloss && assist < 2
+                  const canReveal = !tok.gloss && !!assistant.translation && assist < 3
+                  const tappable = canGloss || canReveal
+                  return (
+                    <span key={`${si}-${ti}`} className="wu">
+                      <span
+                        className={`w ${tok.notable ? 'notice' : ''}${tappable ? ' tap' : ''}`}
+                        data-gloss-trigger={tappable || undefined}
+                        onClick={tappable ? (e) => tapToken(tok, si, e) : undefined}
+                      >
+                        {tok.text}
+                      </span>
+                      {assist >= 2 && tok.gloss && <span className="wg">{tok.gloss}</span>}
+                    </span>
+                  )
+                })
+              )}
+            </span>
+          ) : (
+            assistant.reply
+          )}
+          {assist >= 3 && assistant.translation && (
+            <div className="trans">{assistant.translation}</div>
+          )}
+          {ttsReady && (
+            <button
+              type="button"
+              className="speak-btn"
+              title="Speak reply"
+              aria-label="Speak reply"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSpeak(assistant.reply)
+              }}
+            >
+              🔊
+            </button>
+          )}
+        </div>
+      )}
+      {assistant === null && (
+        <div className="msg bot pending">{turn.pendingText || '…'}</div>
+      )}
+    </div>
+  )
+})
 
 export default function GuidedPage() {
   const [turns, setTurns] = useState<Turn[]>([])
@@ -122,6 +209,13 @@ export default function GuidedPage() {
     setBreakOpen(true)
     localStorage.setItem(BREAK_STORAGE_KEY, 'open')
   }, [])
+  const onBubbleTap = useCallback(
+    (id: number) => {
+      setPinnedId(id)
+      if (!breakOpen) openBreak()
+    },
+    [breakOpen, openBreak]
+  )
   // Session-focus chips: collapsed by default — the tutor's steering notes
   // are context, not the thing you opened the breakdown to read.
   const [focusOpen, setFocusOpen] = useState<boolean>(() => {
@@ -135,6 +229,15 @@ export default function GuidedPage() {
   }, [])
   const [wordPopup, setWordPopup] = useState<PopupState | null>(null)
   const closePopup = useCallback(() => setWordPopup(null), [])
+  // Android back button closes the popup instead of exiting the app.
+  useEffect(
+    () => (wordPopup ? openOverlay(closePopup) : undefined),
+    [wordPopup, closePopup]
+  )
+  useEffect(
+    () => (planOpen ? openOverlay(() => setPlanOpen(false)) : undefined),
+    [planOpen]
+  )
   const [ttsReady, setTtsReady] = useState(speechSupported())
   const autoSpeak = settings?.auto_speak ?? false
 
@@ -258,14 +361,7 @@ export default function GuidedPage() {
               if (autoSpeak) speakReply(event.reply)
               updatePending((t) => ({
                 ...t,
-                assistant: {
-                  reply: event.reply,
-                  translation: null,
-                  tokens: [],
-                  mechanics: [],
-                  scaffolds: { replies: [], frames: [], starters: [] },
-                  errors: [],
-                },
+                assistant: emptyAssistant(event.reply),
                 analysisState: 'pending',
                 pendingText: '',
               }))
@@ -347,14 +443,7 @@ export default function GuidedPage() {
             ? t
             : {
                 ...t,
-                assistant: {
-                  reply: t.pendingText,
-                  translation: null,
-                  tokens: [],
-                  mechanics: [],
-                  scaffolds: { replies: [], frames: [], starters: [] },
-                  errors: [],
-                },
+                assistant: emptyAssistant(t.pendingText),
                 analysisState: 'pending',
                 pendingText: '',
               }
@@ -375,7 +464,7 @@ export default function GuidedPage() {
     const vv = window.visualViewport
     if (!vv) return
     const report = () =>
-      logInfo(
+      logDebug(
         '[viewport] vv.height', Math.round(vv.height),
         'offsetTop', Math.round(vv.offsetTop),
         'innerHeight', window.innerHeight
@@ -458,7 +547,7 @@ export default function GuidedPage() {
             }
           }
           void probe.close()
-          logInfo(
+          logDebug(
             '[mic] peak amplitude:', peak.toFixed(4),
             peak < 0.01 ? '=> SILENCE (host audio not reaching emulator)' : '=> real audio captured'
           )
@@ -482,10 +571,10 @@ export default function GuidedPage() {
       logInfo('[mic] recording started (auto-stop in 10s, click again to stop early)')
       setTimeout(() => {
         if (recorder.state !== 'inactive') {
-          logInfo('[mic] auto-stopping after 10s')
+          logInfo('[mic] auto-stopping')
           recorder.stop()
         }
-      }, 10000)
+      }, MIC_AUTO_STOP_MS)
     } catch (e) {
       setRecording(false)
       logError('[mic] failed to start recording:', e)
@@ -509,12 +598,10 @@ export default function GuidedPage() {
           t.assistant.scaffolds.starters.length > 0)
     )?.assistant?.scaffolds
 
+  // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
-    ? (settings.target_language === 'es-ES'
-        ? 'Spanish'
-        : settings.target_language === 'fr-FR'
-          ? 'French'
-          : settings.target_language.split('-')[0].toUpperCase())
+    ? (TARGET_LANGUAGES.find(([c]) => c === settings.target_language)?.[1] ??
+       settings.target_language.split('-')[0].toUpperCase())
     : ''
 
   return (
@@ -538,116 +625,18 @@ export default function GuidedPage() {
               Say hello to start the conversation.
             </p>
           )}
-          {turns.map((turn) => {
-            const assistant = turn.assistant
-            const sentences =
-              assistant && assistant.tokens.length > 0 ? groupSentences(assistant.tokens) : []
-            const tapToken = (
-              tok: GuidedToken,
-              si: number,
-              e: React.MouseEvent<HTMLSpanElement>
-            ) => {
-              if (!assistant) return
-              const rect = e.currentTarget.getBoundingClientRect()
-              const show = (text: string) =>
-                setWordPopup((prev) =>
-                  prev && prev.text === text
-                    ? null
-                    : { text, x: rect.left + rect.width / 2, y: Math.max(rect.top - 8, 56) }
-                )
-              if (tok.gloss) {
-                // Below Guided level, glosses are not rendered inline — tap to see one.
-                if (assist < 2) show(tok.gloss)
-                return
-              }
-              // Gloss-less (punctuation) token: reveal that sentence's translation.
-              if (assist >= 3 || !assistant.translation) return
-              const parts = splitSentences(assistant.translation)
-              show(
-                parts.length === sentences.length
-                  ? parts[si] ?? assistant.translation
-                  : assistant.translation
-              )
-            }
-            return (
-            <div key={turn.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {turn.user && (
-                <div className="msg me">{turn.user}</div>
-              )}
-              {assistant && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    // Pin this turn AND surface its analysis — on mobile the
-                    // panel is usually collapsed, so a tap should reveal it.
-                    setPinnedId(turn.id)
-                    if (!breakOpen) openBreak()
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      setPinnedId(turn.id)
-                      if (!breakOpen) openBreak()
-                    }
-                  }}
-                  className={`msg bot ${
-                    (pinnedId ?? latestAssistantId) === turn.id ? 'focused' : ''
-                  }`}
-                >
-                  {assistant.tokens.length > 0 ? (
-                    <span className="line">
-                      {sentences.flatMap((sentence, si) =>
-                        sentence.map((tok, ti) => {
-                          const canGloss = !!tok.gloss && assist < 2
-                          const canReveal = !tok.gloss && !!assistant.translation && assist < 3
-                          const tappable = canGloss || canReveal
-                          return (
-                            <span key={`${si}-${ti}`} className="wu">
-                              <span
-                                className={`w ${tok.notable ? 'notice' : ''}${
-                                  tappable ? ' tap' : ''
-                                }`}
-                                data-gloss-trigger={tappable || undefined}
-                                onClick={tappable ? (e) => tapToken(tok, si, e) : undefined}
-                              >
-                                {tok.text}
-                              </span>
-                              {assist >= 2 && tok.gloss && (
-                                <span className="wg">{tok.gloss}</span>
-                              )}
-                            </span>
-                          )
-                        })
-                      )}
-                    </span>
-                  ) : (
-                    assistant.reply
-                  )}
-                  {assist >= 3 && assistant.translation && (
-                    <div className="trans">{assistant.translation}</div>
-                  )}
-                  {ttsReady && (
-                    <button
-                      type="button"
-                      className="speak-btn"
-                      title="Speak reply"
-                      aria-label="Speak reply"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        speakReply(assistant.reply)
-                      }}
-                    >
-                      🔊
-                    </button>
-                  )}
-                </div>
-              )}
-              {assistant === null && (
-                <div className="msg bot pending">{turn.pendingText || '…'}</div>
-              )}
-            </div>
-            )
-          })}
+          {turns.map((turn) => (
+            <TurnView
+              key={turn.id}
+              turn={turn}
+              focused={(pinnedId ?? latestAssistantId) === turn.id}
+              ttsReady={ttsReady}
+              assist={assist}
+              onBubbleTap={onBubbleTap}
+              onSpeak={speakReply}
+              onPopup={setWordPopup}
+            />
+          ))}
           {error && <div className="err">{error}</div>}
         </div>
 
@@ -720,6 +709,12 @@ export default function GuidedPage() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={targetLanguageName ? `Write in ${targetLanguageName}…` : 'Write…'}
               disabled={!isTauri}
+              // Keyboard semantics: predictions/spellcheck must match the
+              // language being LEARNED, not the device language.
+              lang={settings?.target_language ?? 'es-ES'}
+              enterKeyHint="send"
+              autoCorrect="off"
+              spellCheck={false}
             />
             <button
               type="button"

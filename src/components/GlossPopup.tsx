@@ -6,6 +6,15 @@ export interface PopupState {
   y: number
 }
 
+/// Anchor a popup above `el`, clamped so the card never clips the viewport
+/// edges on narrow screens.
+export function popupAnchor(el: Element): { x: number; y: number } {
+  const rect = el.getBoundingClientRect()
+  const half = Math.min(170, window.innerWidth / 2 - 8)
+  const x = Math.min(Math.max(rect.left + rect.width / 2, half), window.innerWidth - half)
+  return { x, y: Math.max(rect.top - 8, 56) }
+}
+
 export function GlossPopup({ popup, onClose }: { popup: PopupState; onClose: () => void }) {
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
