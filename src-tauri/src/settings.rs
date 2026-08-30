@@ -62,8 +62,21 @@ pub struct Settings {
     /// Configurable keyboard shortcuts.
     #[serde(default)]
     pub shortcuts: Shortcuts,
+    /// Speech engine for playback: "groq" (cloud PlayAI) or "os" (Web Speech).
+    #[serde(default = "default_tts_engine")]
+    pub tts_engine: String,
+    /// Groq PlayAI voice name.
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
     #[serde(default)]
     pub observer_model: Option<String>,
+}
+
+fn default_tts_engine() -> String {
+    "groq".into()
+}
+fn default_tts_voice() -> String {
+    "Celeste-PlayAI".into()
 }
 
 fn default_model() -> String {
@@ -102,6 +115,14 @@ fn migrate(settings: &mut Settings) {
         );
         settings.openrouter_model = default_model();
     }
+    // playai-tts was decommissioned; the engine became "cloud" (OpenRouter
+    // gpt-audio-mini) with OpenAI voice names.
+    if settings.tts_engine == "groq" {
+        settings.tts_engine = "cloud".into();
+    }
+    if settings.tts_voice == "Celeste-PlayAI" {
+        settings.tts_voice = "nova".into();
+    }
 }
 
 /// The observer default THINKS — reasoning is where its value comes from.
@@ -129,23 +150,25 @@ impl Default for Settings {
             auto_speak: false,
             auto_send: false,
             shortcuts: Shortcuts::default(),
+            tts_engine: default_tts_engine(),
+            tts_voice: default_tts_voice(),
             observer_model: None,
         }
     }
 }
 
-/// Mask a secret for display/IPC: keep only the last 4 chars. A masked
+/// Mask a secret for display/IPC: show the first and last 6 characters so
+/// the user can verify WHICH key is stored, blank the middle. A masked
 /// value round-trips safely — save_settings treats an unchanged mask as
 /// "keep the stored key".
 pub fn mask(key: &str) -> String {
-    if key.is_empty() {
-        return String::new();
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() < 12 {
+        return "•".repeat(chars.len());
     }
-    let tail: String = key
-        .chars()
-        .skip(key.chars().count().saturating_sub(4))
-        .collect();
-    format!("••••{tail}")
+    let head: String = chars[..6].iter().collect();
+    let tail: String = chars[chars.len() - 6..].iter().collect();
+    format!("{head}••••••••{tail}")
 }
 
 impl Settings {
@@ -214,12 +237,15 @@ mod tests {
 use super::*;
 
 #[test]
-fn mask_hides_everything_but_tail() {
+fn mask_shows_head_and_tail_only() {
     assert_eq!(mask(""), "");
-    let m = mask("sk-or-v1-abcd1234");
-    assert!(m.starts_with("\u{2022}\u{2022}\u{2022}\u{2022}"));
-    assert!(m.ends_with("1234"));
-    assert!(!m.contains("sk-or"));
+    let key = "sk-or-v1-0123456789abcdef";
+    let m = mask(key);
+    // head 6 + bullet run + tail 6 — enough to identify, nothing more.
+    assert!(m.starts_with("sk-or-"));
+    assert!(m.ends_with("bcdef"));
+    assert!(m.contains("••••••••"));
+    assert!(!m.contains("v1-0123"));
 }
 
 #[test]

@@ -76,6 +76,7 @@ pub fn run() {
             commands::save_settings,
             commands::validate_key,
             commands::get_diagnostics,
+            commands::speak_text,
             commands::guided_turn,
             commands::generate_story,
             commands::transcribe_audio,

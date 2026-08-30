@@ -210,6 +210,37 @@ Retry counters (429 / parse / validation / exhausted) are session-scoped and
 visible in the logs overlay header, so a misbehaving model or prompt shows up
 as climbing numbers instead of silent success.
 
+## Voice pipeline: STT + TTS
+
+**STT (speech → text):** Groq `whisper-large-v3-turbo`. The mic stream is
+recorded in the webview (with live waveform + silence auto-stop) and uploaded
+as webm/opus. Groq remains here — it does one thing well and has no
+replacement on OpenRouter.
+
+**TTS (text → speech):** cloud synthesis through **OpenRouter itself** —
+`gpt-audio-mini` with `modalities: ["text","audio"]`. Decision record:
+
+- Groq's `playai-tts` was **decommissioned** (verified against the live
+  catalog — no TTS models remain in Groq's list). Groq's only remaining role
+  is STT.
+- Audio output on OpenRouter is **streaming-only** and ships raw **PCM16**
+  (24kHz mono LE) instead of a framed file: `speak_text` consumes the SSE
+  stream, accumulates the base64 PCM, and wraps it in a 44-byte WAV header.
+  No continuous connection, no websockets — one ordinary HTTPS request that
+  answers in chunks.
+- The webview's contract is "play this WAV blob" — fully provider-agnostic.
+  The vendor dialect lives and dies inside the single `speak_text` function;
+  swapping TTS vendors (Google Cloud TTS's 1M free chars/month, ElevenLabs,
+  Azure) is a rewrite of that one function plus a Settings entry.
+- Fallback chain: cloud synthesis failure → OS voice via Web Speech API,
+  logged as a loud ERROR in the logs overlay (never a silent degradation).
+
+Pricing context (per M tokens, Aug 2026 catalog): gpt-audio-mini
+$0.60 in / $2.40 out — a heavy session of spoken replies costs cents.
+Options evaluated and shelved: Google Cloud TTS (1M chars/month free — the
+quality upgrade candidate), ElevenLabs (best pronunciation, new credential),
+Edge TTS (unofficial API, grey zone), Piper (offline neural, real machinery).
+
 ## Persistence
 
 | Data | Where | Written by |

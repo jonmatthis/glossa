@@ -129,6 +129,20 @@ const SHORTCUT_ROWS: { action: ShortcutAction; label: string }[] = [
   { action: 'settings', label: 'Open settings' },
 ]
 
+const TTS_VOICES = [
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse',
+]
+
 export function SettingsModal({
   onClose,
   onSaved,
@@ -257,9 +271,9 @@ export function SettingsModal({
           <label>OpenRouter API key</label>
           <div className="key-row">
             <input
-              type="password"
+              className="key-input"
               value={settings.openrouter_key}
-              placeholder="sk-or-..."
+              placeholder="sk-or-... (masked after save)"
               onChange={(e) => setSettings({ ...settings, openrouter_key: e.target.value })}
             />
             <KeyBadge check={openrouterCheck} />
@@ -276,9 +290,9 @@ export function SettingsModal({
           <label>Groq API key (speech-to-text)</label>
           <div className="key-row">
             <input
-              type="password"
+              className="key-input"
               value={settings.groq_key}
-              placeholder="gsk_..."
+              placeholder="gsk_... (masked after save)"
               onChange={(e) => setSettings({ ...settings, groq_key: e.target.value })}
             />
             <KeyBadge check={groqCheck} />
@@ -385,6 +399,43 @@ export function SettingsModal({
               ↻
             </button>
           </div>
+        </div>
+      ),
+    },
+    tts_engine: {
+      section: 'voice',
+      label: 'Speech engine',
+      kw: 'tts engine speech synthesis groq playai cloud voice os offline playback',
+      node: (
+        <div className="form-row">
+          <label>Speech engine (reads replies aloud)</label>
+          <select
+            value={settings.tts_engine}
+            onChange={(e) => setSettings({ ...settings, tts_engine: e.target.value })}
+          >
+            <option value="cloud">Cloud — gpt-audio-mini via OpenRouter (natural)</option>
+            <option value="os">OS voice (offline)</option>
+          </select>
+        </div>
+      ),
+    },
+    tts_voice: {
+      section: 'voice',
+      label: 'Cloud voice',
+      kw: 'cloud voice actor narrator openai alloy nova',
+      node: (
+        <div className="form-row">
+          <label>Cloud voice</label>
+          <select
+            value={settings.tts_voice}
+            onChange={(e) => setSettings({ ...settings, tts_voice: e.target.value })}
+          >
+            {TTS_VOICES.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
         </div>
       ),
     },

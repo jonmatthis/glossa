@@ -14,7 +14,7 @@ import type {
 import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPopup'
 import { getPlan, getSettings, isTauri, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
-import { loadVoices, speak, speechSupported, stopSpeaking } from '../lib/speech'
+import { loadVoices, speakSmart, speechSupported, stopSpeaking } from '../lib/speech'
 import { comboFromEvent } from '../lib/keyboard'
 import { groupSentences, splitSentences } from '../lib/sentences'
 import { normalizeDocs } from '../lib/normalize'
@@ -289,7 +289,7 @@ function ScoreMeter({ label, value }: { label: string; value: number }) {
   )
 }
 
-export default function GuidedPage() {
+export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: number }) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [assist, setAssist] = useState<AssistLevel>(3)
   const [pinnedId, setPinnedId] = useState<number | null>(null)
@@ -361,9 +361,13 @@ export default function GuidedPage() {
   const speakReply = useCallback(
     (text: string) => {
       const lang = settings?.target_language ?? 'es-ES'
-      if (!speak(text, lang)) logWarn('[tts] speech unavailable or empty text')
+      const engine = settings?.tts_engine ?? 'cloud'
+      const voice = settings?.tts_voice || 'nova'
+      void speakSmart(text, lang, engine, voice).then((ok) => {
+        if (!ok) logWarn('[tts] speech unavailable or empty text')
+      })
     },
-    [settings?.target_language]
+    [settings?.target_language, settings?.tts_engine, settings?.tts_voice]
   )
 
   const streamRef = useRef<HTMLDivElement | null>(null)
@@ -396,6 +400,8 @@ export default function GuidedPage() {
       setAssist(Number(stored) as AssistLevel)
       logInfo('[guided] restored assist level:', stored)
     }
+    // Re-fetch whenever Settings saves (settingsVersion bumps on save) —
+    // without this, toggles like auto-speak/auto-send did nothing until restart.
     void getSettings()
       .then((s) => {
         setSettings(s)
@@ -419,7 +425,7 @@ export default function GuidedPage() {
         })
       })
       .catch((e) => logWarn('[guided] plan load failed:', e))
-  }, [])
+  }, [settingsVersion])
 
   useEffect(() => {
     const el = streamRef.current
@@ -918,7 +924,7 @@ export default function GuidedPage() {
                ))}
            </div>
           {recording && recAnalyser && (
-            <WaveformStrip analyserNode={recAnalyser} height={44} timelineSeconds={6} />
+            <WaveformStrip analyserNode={recAnalyser} height={44} timelineSeconds={10} />
           )}
            <div className="steer-row">
              <select

@@ -103,7 +103,7 @@ pub fn extract_json(raw: &str) -> String {
 /// Char-boundary-safe truncation for log lines. Slicing a &str at a raw byte
 /// offset panics when the offset lands inside a multi-byte character (e.g.
 /// '¡') — which degenerate model output WILL hit eventually.
-fn truncate_for_log(s: &str, max_chars: usize) -> &str {
+pub fn truncate_for_log(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         Some((idx, _)) => &s[..idx],
         None => s,

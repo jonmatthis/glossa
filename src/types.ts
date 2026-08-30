@@ -15,6 +15,8 @@ export interface Settings {
   microphone_device_id: string | null
   auto_speak: boolean
   auto_send: boolean
+  tts_engine: string
+  tts_voice: string
   shortcuts: Shortcuts
 }
 

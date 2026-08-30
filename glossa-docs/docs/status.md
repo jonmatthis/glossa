@@ -28,7 +28,7 @@ commit"; the whole app tree is untracked).
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (tokens/translation/mechanics/scaffolds) with per-section degradation | `commands.rs:353-508` |
 | **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split) | `commands.rs` coach pass, `coach.md`, Coach tab |
-| **Voice I/O** — mic with 20s-silence auto-stop, **live scrolling waveform** while recording, optional auto-send; OS-voice auto-speak + 🔊 replay; configurable shortcuts | `GuidedPage.toggleMic`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
+| **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
 | Observer pass, non-overlapping, plan/profile persisted + learner-visible drawer | `commands.rs:262-351`, `observer.rs` |
 | Anti-repetition (taught ledger + 20-card ring) | `observer.rs::directives_block`, `commands.rs:483-496` |
 | Structured output fallback ladder | `ai.rs::structured_validated` |
@@ -166,7 +166,7 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 - Onboarding (level picker, first-run flow beyond Settings)
 - Any persistence of chat; any export
 - SRS / vocabulary layer
-- Cloud TTS (Groq PlayAI etc.) — basic OS-voice TTS **is** implemented
+- Cloud TTS: **shipped** (OpenRouter gpt-audio-mini, cached, OS fallback)
   (Web Speech API: 🔊 per bubble + auto-speak toggle); cloud quality upgrade
   is a fast-follow
 - Mobile scaffolds, CI pipelines, installers for mac/Linux (config targets

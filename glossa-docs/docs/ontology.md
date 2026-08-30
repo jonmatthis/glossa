@@ -44,6 +44,12 @@ Owned by: user, via Settings modal. Loaded at startup; cloned per command call.
 | `target_language` | string (BCP-47) | `"es-ES"` | One of 10 codes in `languages.rs`. |
 | `native_language` | string (ISO 639-1) | `"en"` | One of 9 codes. |
 | `microphone_device_id` | Option\<string\> | `None` | `MediaDeviceInfo.deviceId`; `None` = system default. |
+| `auto_speak` | bool | `false` | Speak each tutor reply via the configured TTS engine. |
+| `auto_send` | bool | `false` | Send speech transcriptions immediately instead of filling the composer. |
+| `tts_engine` | string | `"cloud"` | Playback engine: `cloud` (OpenRouter gpt-audio-mini) or `os` (Web Speech, offline). Cloud failures fall back to OS voice — loudly logged. Legacy `"groq"` migrates to `"cloud"` (playai-tts decommissioned). |
+| `tts_voice` | string | `"nova"` | Cloud voice name (OpenAI audio voices: alloy, nova, shimmer, …). |
+| `shortcuts` | Shortcuts | ctrl+m / ctrl+l / ctrl+b / ctrl+, | Configurable combos: mic toggle, speak last reply, analysis panel, settings. Normalized "ctrl+shift+x" strings (`lib/keyboard.ts`). |
+| `observer_model` | Option\<string\> | `None` → reasoning default | The reasoning model for observer passes. |
 
 **Languages.** One target language on the ladder at a time — currently
 `es-ES` (see [Future Work](./future-work) for the ladder and the mechanical

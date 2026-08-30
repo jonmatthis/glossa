@@ -39,6 +39,8 @@ class PageBoundary extends Component<{ children: ReactNode }, { error: Error | n
 export default function App() {
   const [page, setPage] = useState<Page>('guided')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Bumped whenever Settings saves — pages watch it and re-fetch settings.
+  const [settingsVersion, setSettingsVersion] = useState(0)
   const [showNotTauri, setShowNotTauri] = useState(false)
 
   // Android back closes the Settings modal instead of exiting the app.
@@ -132,7 +134,7 @@ export default function App() {
               aria-hidden={page !== 'guided'}
             >
               <PageBoundary>
-                <GuidedPage />
+                <GuidedPage settingsVersion={settingsVersion} />
               </PageBoundary>
             </div>
             <div
@@ -154,6 +156,7 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={(s) => {
             localStorage.setItem('glossa_target', s.target_language)
+            setSettingsVersion((v) => v + 1)
             setSettingsOpen(false)
           }}
         />
