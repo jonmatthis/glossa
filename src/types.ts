@@ -6,6 +6,7 @@ export interface Settings {
   target_language: string
   native_language: string
   microphone_device_id: string | null
+  auto_speak: boolean
 }
 
 export interface GuidedToken {

@@ -1,8 +1,10 @@
-mod ai;
-mod commands;
+pub mod ai;
+#[cfg(test)]
+mod bench;
+pub mod commands;
 mod languages;
 mod observer;
-mod prompts;
+pub mod prompts;
 mod settings;
 
 use std::sync::Mutex;

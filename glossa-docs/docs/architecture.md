@@ -56,7 +56,7 @@ flowchart TB
 | `src-tauri/src/ai.rs` | 378 | OpenAI-compatible client: streaming, schema-constrained structured output, fallback ladder, `$defs` inlining |
 | `src-tauri/src/observer.rs` | 278 | TeachingPlan/Profile documents, observer pass, `directives_block` |
 | `src-tauri/src/prompts.rs` | 216 | Prompt builders composed from shared blocks |
-| `src-tauri/src/languages.rs` | 78 | Language lists + per-variant overlays |
+| `src-tauri/src/languages.rs` | 78 | Language ladder (currently es-ES) + per-variant overlays |
 | `src-tauri/src/settings.rs` | 67 | Settings model + JSON persistence |
 | `src-tauri/src/lib.rs` | 80 | Bootstrap, `AppState`, command registration, logging |
 | `src/pages/GuidedPage.tsx` | 744 | The main surface |
@@ -143,9 +143,15 @@ Key properties:
 
 | Role | Model default | Reasoning | Temp | max_tokens | Output |
 |---|---|---|---|---|---|
-| Reply worker | `deepseek/deepseek-v4-flash-0731` (worker default) | disabled (fallback: retry without the parameter for mandatory-reasoning models) | 0.6 | 600 | plain text, streamed |
-| Analysis workers ×4 | same worker model | disabled | 0.1–0.6 | 3000 | schema-constrained JSON |
+| Reply worker | `google/gemini-2.5-flash` | disabled (per-family dialect: `enabled:false`, or `effort:minimal` on OpenAI) | 0.6 | 600 | plain text, streamed |
+| Analysis workers ×4 | same worker model | disabled | 0.1–0.6 | 6000 | schema-constrained JSON |
 | Observer | `z-ai/glm-5.3-flash` | **enabled** (the whole point) | 0.4 | 8000 | schema-constrained JSON |
+
+Model changes are decided by running the bench harness
+(`cargo test model_bench -- --ignored --nocapture` in `src-tauri/`) against
+the real prompts, then updating the default + the legacy-migration list in
+`settings.rs`. Any new default must pass 6/6 with zero corrective retries
+before it ships.
 
 Defaults live in `settings.rs` (`default_model`, `default_observer_model`);
 the worker model is editable in Settings; the observer model is currently

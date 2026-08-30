@@ -35,16 +35,7 @@ export async function invoke<T>(
 }
 
 export const TARGET_LANGUAGES: [string, string][] = [
-  ['en-GB', 'English (UK)'],
-  ['en-US', 'English (US)'],
   ['es-ES', 'Spanish (Spain)'],
-  ['fr-FR', 'French'],
-  ['it-IT', 'Italian'],
-  ['pt-PT', 'Portuguese (Portugal)'],
-  ['de-DE', 'German'],
-  ['ja-JP', 'Japanese'],
-  ['ko-KR', 'Korean'],
-  ['zh-CN', 'Chinese (Simplified)'],
 ]
 
 export const NATIVE_LANGUAGES: [string, string][] = [

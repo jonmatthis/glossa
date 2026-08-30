@@ -175,6 +175,9 @@ pub struct Scaffolds {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TokensOut {
+    /// minItems is enforced at the schema level: constrained providers
+    /// cannot return an empty token list.
+    #[schemars(length(min = 1))]
     pub tokens: Vec<GuidedToken>,
 }
 
@@ -185,12 +188,22 @@ pub struct TranslationOut {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MechanicsOut {
+    #[schemars(length(min = 1))]
     pub mechanics: Vec<Mechanic>,
 }
 
+/// FLAT on the wire on purpose: the old `{scaffolds: {replies, ...}}`
+/// wrapper made models return the inner object at the top level. Flat shape
+/// + schema-level minItems = models comply. `Scaffolds` below stays the
+/// public turn shape.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScaffoldsOut {
-    pub scaffolds: Scaffolds,
+    #[schemars(length(min = 1))]
+    pub replies: Vec<String>,
+    #[schemars(length(min = 1))]
+    pub frames: Vec<String>,
+    #[schemars(length(min = 1))]
+    pub starters: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -586,9 +599,9 @@ pub async fn guided_turn(
                         "ScaffoldsOut",
                         false,
                         |sc: &ScaffoldsOut| {
-                            if sc.scaffolds.replies.is_empty()
-                                || sc.scaffolds.frames.is_empty()
-                                || sc.scaffolds.starters.is_empty()
+                            if sc.replies.is_empty()
+                                || sc.frames.is_empty()
+                                || sc.starters.is_empty()
                             {
                                 Some("all three scaffold lists must be populated".into())
                             } else {
@@ -602,7 +615,11 @@ pub async fn guided_turn(
                         tokens: None,
                         translation: None,
                         mechanics: None,
-                        scaffolds: Some(out.scaffolds.clone()),
+                        scaffolds: Some(Scaffolds {
+                            replies: out.replies.clone(),
+                            frames: out.frames.clone(),
+                            starters: out.starters.clone(),
+                        }),
                     });
                 }
                 result
@@ -648,7 +665,11 @@ pub async fn guided_turn(
             }
         };
         let scaffolds = match scaffolds_out {
-            Ok(sc) => sc.scaffolds,
+            Ok(sc) => Scaffolds {
+                replies: sc.replies,
+                frames: sc.frames,
+                starters: sc.starters,
+            },
             Err(e) => {
                 failures.push(format!("scaffolds: {e}"));
                 Scaffolds {
@@ -727,6 +748,7 @@ pub struct StoryResponse {
     /// Short story title in the target language.
     pub title: String,
     /// The story as 1-4 paragraphs, in order.
+    #[schemars(length(min = 1, max = 4))]
     pub paragraphs: Vec<StoryParagraph>,
 }
 

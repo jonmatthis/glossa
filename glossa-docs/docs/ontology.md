@@ -39,16 +39,17 @@ Owned by: user, via Settings modal. Loaded at startup; cloned per command call.
 |---|---|---|---|
 | `openrouter_key` | string | `""` | Required for all chat. Plaintext on disk (PoC tradeoff). |
 | `groq_key` | string | `""` | Required only for voice input. |
-| `openrouter_model` | string | `deepseek/deepseek-v4-flash-0731` | Worker model (reply + analysis + stories). |
+| `openrouter_model` | string | `google/gemini-2.5-flash` | Worker model (reply + analysis + stories). Chosen via live bench (6/6 structured calls, zero retries). Demoted candidates auto-migrate: deepseek-v4-flash (repetition loops), gemini-3.1-flash-lite (story gloss failures), gpt-5-nano (needs strict-dialect schemas), gemini-3.5-flash-lite (reasoning mandatory — hard-fails by design). |
 | `observer_model` | Option\<string\> | `None` → `z-ai/glm-5.3-flash` | The reasoning model for observer passes. Not yet editable in UI. **Missing from the TS type** — saving Settings from the UI silently resets it. |
 | `target_language` | string (BCP-47) | `"es-ES"` | One of 10 codes in `languages.rs`. |
 | `native_language` | string (ISO 639-1) | `"en"` | One of 9 codes. |
 | `microphone_device_id` | Option\<string\> | `None` | `MediaDeviceInfo.deviceId`; `None` = system default. |
 
-**Languages.** Targets: `en-GB, en-US, es-ES, fr-FR, it-IT, pt-PT, de-DE,
-ja-JP, ko-KR, zh-CN`. Natives: `en, es, fr, it, pt, de, ja, ko, zh`.
-Each target has a hard-coded prompt `overlay()` (variant-specific guidance).
-`iso639()` strips the region for STT.
+**Languages.** One target language on the ladder at a time — currently
+`es-ES` (see [Future Work](./future-work) for the ladder and the mechanical
+analysis layer that gates each new language). Natives: `en, es, fr, it, pt,
+de, ja, ko, zh`. The target has a hard-coded prompt `overlay()` with
+variant-specific guidance. `iso639()` strips the region for STT.
 
 ---
 

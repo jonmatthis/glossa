@@ -12,6 +12,7 @@ import type {
 } from '../types'
 import { GlossPopup, type PopupState } from '../components/GlossPopup'
 import { getPlan, getSettings, isTauri, transcribeAudio } from '../lib/tauri'
+import { loadVoices, speak, speechSupported, stopSpeaking } from '../lib/speech'
 import { logDebug, logError, logInfo, logWarn } from '../lib/log'
 import { needsSpaceBetween } from '../lib/token-spacing'
 
@@ -25,6 +26,7 @@ interface Turn {
 
 const ASSIST_STORAGE_KEY = 'glossa_assist'
 const BREAK_STORAGE_KEY = 'glossa_break'
+const FOCUS_STORAGE_KEY = 'glossa_focus'
 const MOBILE_QUERY = '(max-width: 860px)'
 const ASSIST_LABELS: Record<AssistLevel, string> = {
   0: 'Immersion',
@@ -120,8 +122,29 @@ export default function GuidedPage() {
     setBreakOpen(true)
     localStorage.setItem(BREAK_STORAGE_KEY, 'open')
   }, [])
+  // Session-focus chips: collapsed by default — the tutor's steering notes
+  // are context, not the thing you opened the breakdown to read.
+  const [focusOpen, setFocusOpen] = useState<boolean>(() => {
+    return localStorage.getItem(FOCUS_STORAGE_KEY) === 'open'
+  })
+  const toggleFocus = useCallback(() => {
+    setFocusOpen((open) => {
+      localStorage.setItem(FOCUS_STORAGE_KEY, open ? 'closed' : 'open')
+      return !open
+    })
+  }, [])
   const [wordPopup, setWordPopup] = useState<PopupState | null>(null)
   const closePopup = useCallback(() => setWordPopup(null), [])
+  const [ttsReady, setTtsReady] = useState(speechSupported())
+  const autoSpeak = settings?.auto_speak ?? false
+
+  const speakReply = useCallback(
+    (text: string) => {
+      const lang = settings?.target_language ?? 'es-ES'
+      if (!speak(text, lang)) logWarn('[tts] speech unavailable or empty text')
+    },
+    [settings?.target_language]
+  )
 
   const streamRef = useRef<HTMLDivElement | null>(null)
   const greetedRef = useRef(false)
@@ -132,6 +155,11 @@ export default function GuidedPage() {
 
   useEffect(() => {
     logInfo('[guided] page mounted, isTauri =', isTauri)
+    // Preload OS speech voices so the 🔊 buttons work on first tap.
+    void loadVoices().then((v) => {
+      setTtsReady(v.length > 0 || speechSupported())
+      if (!v.length) logWarn('[tts] no OS voices found — speech disabled')
+    })
     const stored = localStorage.getItem(ASSIST_STORAGE_KEY)
     if (stored === '0' || stored === '1' || stored === '2' || stored === '3') {
       setAssist(Number(stored) as AssistLevel)
@@ -227,6 +255,7 @@ export default function GuidedPage() {
                 `[guided] reply done in ${(performance.now() - turnStarted).toFixed(0)}ms` +
                   ` (${deltaCount} deltas, ${event.reply.length} chars)`
               )
+              if (autoSpeak) speakReply(event.reply)
               updatePending((t) => ({
                 ...t,
                 assistant: {
@@ -337,7 +366,7 @@ export default function GuidedPage() {
         setSending(false)
       }
     },
-    [assist]
+    [assist, autoSpeak, speakReply]
   )
 
   // Diagnostic: keyboard/viewport resize tracking. If the IME is handled
@@ -378,6 +407,7 @@ export default function GuidedPage() {
     const message = text.trim()
     if (!message || sending) return
     setInput('')
+    stopSpeaking() // new turn: silence any ongoing playback
     await requestTurn({ message })
   }
 
@@ -387,6 +417,7 @@ export default function GuidedPage() {
       recorderRef.current?.stop()
       return
     }
+    stopSpeaking() // never record over playback
     try {
       const constraints: MediaTrackConstraints = {}
       const deviceId = settings?.microphone_device_id
@@ -595,6 +626,20 @@ export default function GuidedPage() {
                   {assist >= 3 && assistant.translation && (
                     <div className="trans">{assistant.translation}</div>
                   )}
+                  {ttsReady && (
+                    <button
+                      type="button"
+                      className="speak-btn"
+                      title="Speak reply"
+                      aria-label="Speak reply"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        speakReply(assistant.reply)
+                      }}
+                    >
+                      🔊
+                    </button>
+                  )}
                 </div>
               )}
               {assistant === null && (
@@ -713,17 +758,29 @@ export default function GuidedPage() {
             <span className="chev">{breakOpen ? '▾' : '▸'}</span>
           </span>
         </button>
-        <div className="focus-strip">
-          {plan && plan.session_focus.length > 0 ? (
-            plan.session_focus.map((focus) => (
-              <span key={focus} className="focus-chip">
-                {focus}
-              </span>
-            ))
-          ) : (
-            <span className="focus-chip muted">Warming up — keep chatting and this fills in</span>
-          )}
-        </div>
+        <button
+          type="button"
+          className="focus-toggle"
+          onClick={toggleFocus}
+          aria-expanded={focusOpen}
+          title={focusOpen ? 'Hide session focus' : 'Show session focus'}
+        >
+          {focusOpen ? '▾' : '▸'} Session focus
+          {!focusOpen && plan && plan.session_focus.length > 0 && ` (${plan.session_focus.length})`}
+        </button>
+        {focusOpen && (
+          <div className="focus-strip">
+            {plan && plan.session_focus.length > 0 ? (
+              plan.session_focus.map((focus) => (
+                <span key={focus} className="focus-chip">
+                  {focus}
+                </span>
+              ))
+            ) : (
+              <span className="focus-chip muted">Warming up — keep chatting and this fills in</span>
+            )}
+          </div>
+        )}
         <div className="break-scroll">
           {pinnedTurn?.assistant ? (
             <div>

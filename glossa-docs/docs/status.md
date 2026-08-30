@@ -136,7 +136,9 @@ before any public distribution.
 - Onboarding (level picker, first-run flow beyond Settings)
 - Any persistence of chat; any export
 - SRS / vocabulary layer
-- TTS (Groq `Provider::groq` constructor is reserved dead code)
+- Cloud TTS (Groq PlayAI etc.) — basic OS-voice TTS **is** implemented
+  (Web Speech API: 🔊 per bubble + auto-speak toggle); cloud quality upgrade
+  is a fast-follow
 - Mobile scaffolds, CI pipelines, installers for mac/Linux (config targets
   "all" but untested)
 - Localization of the UI itself (English-only chrome)

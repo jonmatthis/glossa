@@ -250,6 +250,16 @@ export function SettingsModal({
             </button>
           </div>
         </div>
+        <div className="form-row check-row">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.auto_speak}
+              onChange={(e) => setSettings({ ...settings, auto_speak: e.target.checked })}
+            />
+            <span>Auto-speak tutor replies (OS voice, free &amp; offline)</span>
+          </label>
+        </div>
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>
             Cancel

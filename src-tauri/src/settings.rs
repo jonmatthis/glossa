@@ -15,14 +15,49 @@ pub struct Settings {
     pub native_language: String,
     #[serde(default)]
     pub microphone_device_id: Option<String>,
+    /// Speak each tutor reply aloud via OS voices (Web Speech API).
+    #[serde(default)]
+    pub auto_speak: bool,
     #[serde(default)]
     pub observer_model: Option<String>,
 }
 
 fn default_model() -> String {
-    // Fast non-thinking worker: strong multilingual quality, deep pool
-    // (no shared-pool 429s), honors reasoning-disable, handles json_schema.
-    "deepseek/deepseek-v4-flash-0731".into()
+    // Worker default: gemini-2.5-flash — 6/6 on the model bench (all analysis
+    // calls + story, zero retries) plus a full day of live use, zero schema
+    // failures. Structured output is decoder-enforced; ~$0.30/$2.50 per M
+    // tokens.
+    //
+    // Demoted candidates, all verified against the real call path:
+    // - deepseek-v4-flash: repetition loops, wrapper-shape failures.
+    // - gemini-3.1-flash-lite: fast/cheap but failed story gloss validation.
+    // - gemini-3.5-flash-lite: reasoning mandatory — cannot serve as a fast
+    //   worker (fails loudly, by design).
+    // - gpt-5-nano: requires strict-dialect schemas (additionalProperties:
+    //   false + all-properties-required on every nested object). Serving it
+    //   would need a schema normalizer — judged not worth the complexity
+    //   for now. Would also need temperature omitted + reasoning
+    //   effort:minimal (both handled by apply_dialect/reasoning_off).
+    "google/gemini-2.5-flash".into()
+}
+
+/// Prior worker defaults. Stored settings migrate off these on load —
+/// each was demoted after real structured-output failures or superseded.
+const LEGACY_DEFAULT_MODELS: &[&str] = &[
+    "deepseek/deepseek-v4-flash-0731",
+    "google/gemini-3.1-flash-lite",
+    "openai/gpt-5-nano",
+];
+
+fn migrate(settings: &mut Settings) {
+    if LEGACY_DEFAULT_MODELS.contains(&settings.openrouter_model.as_str()) {
+        log::info!(
+            "migrating worker model: {} -> {}",
+            settings.openrouter_model,
+            default_model()
+        );
+        settings.openrouter_model = default_model();
+    }
 }
 
 /// The observer default THINKS — reasoning is where its value comes from.
@@ -47,6 +82,7 @@ impl Default for Settings {
             target_language: default_target(),
             native_language: default_native(),
             microphone_device_id: None,
+            auto_speak: false,
             observer_model: None,
         }
     }
@@ -59,8 +95,11 @@ fn settings_path(dir: &Path) -> std::path::PathBuf {
 pub fn load_or_create(dir: &Path) -> Settings {
     let path = settings_path(dir);
     match std::fs::read_to_string(&path) {
-        Ok(raw) => match serde_json::from_str(&raw) {
-            Ok(s) => s,
+        Ok(raw) => match serde_json::from_str::<Settings>(&raw) {
+            Ok(mut s) => {
+                migrate(&mut s);
+                s
+            }
             Err(e) => {
                 // A corrupt settings file must NEVER be silently replaced —
                 // that would wipe the user's API keys without a word. Move it

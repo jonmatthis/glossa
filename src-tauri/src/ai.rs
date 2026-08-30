@@ -36,27 +36,38 @@ pub struct Provider {
     pub model: String,
 }
 
-/// Dereference `$defs`/`$ref` so grammar-constrained decoders see it all.
-/// Ollama AND several API gateways mishandle nested object references, which
-/// lets the model omit nested keys. Pydantic/schemars emit $defs for every
-/// nested model, so schemas are fully inlined before reaching the provider.
+/// Dereference `$ref` so grammar-constrained decoders see it all.
+/// schemars 0.8 emits `definitions` (draft-07 style); other generators emit
+/// `$defs`. Accept both — unresolved refs 400 on several providers (Gemini).
+/// This function MUST actually inline: an early version looked only for
+/// `$defs` and was a silent no-op.
 pub fn inline_defs(mut schema: Value) -> Value {
-    let defs = schema.get("$defs").cloned().unwrap_or(Value::Null);
+    let defs = schema
+        .get("$defs")
+        .or_else(|| schema.get("definitions"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    fn resolve(defs: &Value, reference: &str) -> Option<Value> {
+        let name = reference
+            .strip_prefix("#/$defs/")
+            .or_else(|| reference.strip_prefix("#/definitions/"))?;
+        defs.get(name).cloned()
+    }
 
     fn walk(node: &mut Value, defs: &Value) {
         match node {
             Value::Object(map) => {
                 if let Some(Value::String(reference)) = map.get("$ref") {
-                    if let Some(name) = reference.strip_prefix("#/$defs/") {
-                        if let Some(def) = defs.get(name) {
-                            let mut cloned = def.clone();
-                            walk(&mut cloned, defs);
-                            *node = cloned;
-                            return;
-                        }
+                    if let Some(def) = resolve(defs, reference) {
+                        let mut def = def;
+                        walk(&mut def, defs);
+                        *node = def;
+                        return;
                     }
                 }
                 map.remove("$defs");
+                map.remove("definitions");
                 for (_, value) in map.iter_mut() {
                     walk(value, defs);
                 }
@@ -99,6 +110,27 @@ fn truncate_for_log(s: &str, max_chars: usize) -> &str {
     }
 }
 
+/// "Do not think" — in each family's native dialect. Gemini/DeepSeek take
+/// `enabled: false`; OpenAI reasoning models take `effort: minimal`
+/// (`enabled` is not a field they accept and 400s under require_parameters).
+fn reasoning_off(model: &str) -> Value {
+    if model.starts_with("openai/") {
+        json!({"effort": "minimal"})
+    } else {
+        json!({"enabled": false})
+    }
+}
+
+/// OpenAI reasoning models (gpt-5 family) reject ANY explicit temperature —
+/// the field must be absent for them. Other families accept it normally.
+fn apply_dialect(model: &str, payload: &mut Value) {
+    if model.starts_with("openai/") {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("temperature");
+        }
+    }
+}
+
 impl Provider {
     pub fn openrouter(api_key: &str, model: &str) -> Self {
         Self {
@@ -137,16 +169,13 @@ impl Provider {
         // token — disable it for conversational replies. If a model rejects
         // the request, we FAIL LOUDLY: that model cannot serve this call and
         // must be changed, not papered over.
-        let payload = json!({
+        let mut payload = json!({
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "stream": true,
             "max_tokens": 600,
-            "reasoning": {"enabled": false},
-            // Mild repetition guard: degenerate loops ("¡Hola¡Hola¡Hola…")
-            // burn minutes of wall time and body size when they hit.
-            "frequency_penalty": 0.3,
+            "reasoning": reasoning_off(&self.model),
             // Route ONLY to providers that actually honor request parameters
             // (json_schema, reasoning, ...). Without this, OpenRouter
             // silently ignores unsupported params and hands the request to a
@@ -154,6 +183,7 @@ impl Provider {
             // "guaranteed" structured output degrades into suggestions.
             "provider": {"require_parameters": true},
         });
+        apply_dialect(&self.model, &mut payload);
         let url = format!("{}/chat/completions", self.base_url);
         info!(
             "[ai] streaming request: model={} messages={} temp={:.2}",
@@ -329,14 +359,13 @@ impl Provider {
             // Schema-constrained decoding on EVERY attempt. With
             // require_parameters, a provider that can't honor the schema
             // fails at request time — loudly — instead of prompting.
-            let payload = if allow_reasoning {
+            let mut payload = if allow_reasoning {
                 json!({
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
                     "max_tokens": 8000,
-                    "frequency_penalty": 0.3,
-                    "provider": {"require_parameters": true},
+                                        "provider": {"require_parameters": true},
                     "response_format": {
                         "type": "json_schema",
                         "json_schema": {"name": name, "schema": schema}
@@ -351,8 +380,7 @@ impl Provider {
                     "messages": attempts,
                     "temperature": temperature,
                     "max_tokens": 6000,
-                    "reasoning": {"enabled": false},
-                    "frequency_penalty": 0.3,
+                    "reasoning": reasoning_off(&self.model),
                     "provider": {"require_parameters": true},
                     "response_format": {
                         "type": "json_schema",
@@ -360,6 +388,7 @@ impl Provider {
                     },
                 })
             };
+            apply_dialect(&self.model, &mut payload);
             info!(
                 "[ai] structured attempt {attempt} ({name}): messages={}",
                 attempts.len()
