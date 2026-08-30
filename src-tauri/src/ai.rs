@@ -9,7 +9,26 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use log::{debug, error, info, warn};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+/// Session counters for RETRIES of transient, expected failures (429s,
+/// malformed model output fed back for correction). These are NOT fallbacks:
+/// nothing degrades silently. If one of these climbs, the model/prompt is
+/// misbehaving and should be looked at — but the call still succeeded.
+pub fn retry_stats_snapshot() -> [(&'static str, u64); 4] {
+    [
+        ("parse_retry", PARSE_RETRY.load(Ordering::Relaxed)),
+        ("validation_retry", VALIDATION_RETRY.load(Ordering::Relaxed)),
+        ("http_429_retry", HTTP_429_RETRY.load(Ordering::Relaxed)),
+        ("retries_exhausted", RETRIES_EXHAUSTED.load(Ordering::Relaxed)),
+    ]
+}
+
+pub static PARSE_RETRY: AtomicU64 = AtomicU64::new(0);
+pub static VALIDATION_RETRY: AtomicU64 = AtomicU64::new(0);
+pub static HTTP_429_RETRY: AtomicU64 = AtomicU64::new(0);
+pub static RETRIES_EXHAUSTED: AtomicU64 = AtomicU64::new(0);
 
 pub struct Provider {
     pub base_url: String,
@@ -70,10 +89,21 @@ pub fn extract_json(raw: &str) -> String {
     trimmed.to_string()
 }
 
+/// Char-boundary-safe truncation for log lines. Slicing a &str at a raw byte
+/// offset panics when the offset lands inside a multi-byte character (e.g.
+/// '¡') — which degenerate model output WILL hit eventually.
+fn truncate_for_log(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 impl Provider {
-    pub fn openrouter(api_key: &str, model: &str) -> Self {        Self {
+    pub fn openrouter(api_key: &str, model: &str) -> Self {
+        Self {
             base_url: "https://openrouter.ai/api/v1".into(),
-            api_key: api_key.into(),
+            api_key: api_key.trim().into(),
             model: model.into(),
         }
     }
@@ -83,7 +113,7 @@ impl Provider {
     pub fn groq(api_key: &str) -> Self {
         Self {
             base_url: "https://api.groq.com/openai/v1".into(),
-            api_key: api_key.into(),
+            api_key: api_key.trim().into(),
             model: "whisper-large-v3-turbo".into(),
         }
     }
@@ -104,8 +134,9 @@ impl Provider {
         on_delta: &mut (dyn FnMut(&str) + Send),
     ) -> Result<String, String> {
         // Reasoning models (GLM etc.) burn seconds "thinking" before the first
-        // token — disable it for conversational replies, with a fallback if a
-        // provider rejects the parameter.
+        // token — disable it for conversational replies. If a model rejects
+        // the request, we FAIL LOUDLY: that model cannot serve this call and
+        // must be changed, not papered over.
         let payload = json!({
             "model": self.model,
             "messages": messages,
@@ -113,6 +144,15 @@ impl Provider {
             "stream": true,
             "max_tokens": 600,
             "reasoning": {"enabled": false},
+            // Mild repetition guard: degenerate loops ("¡Hola¡Hola¡Hola…")
+            // burn minutes of wall time and body size when they hit.
+            "frequency_penalty": 0.3,
+            // Route ONLY to providers that actually honor request parameters
+            // (json_schema, reasoning, ...). Without this, OpenRouter
+            // silently ignores unsupported params and hands the request to a
+            // provider that prompts instead of constraining — which is how
+            // "guaranteed" structured output degrades into suggestions.
+            "provider": {"require_parameters": true},
         });
         let url = format!("{}/chat/completions", self.base_url);
         info!(
@@ -133,7 +173,9 @@ impl Provider {
                 format!("request failed: {e}")
             })?;
         let response = if response.status().as_u16() == 429 {
-            warn!("[ai] streaming 429 - backing off 3s and retrying once");
+            // Rate limiting is a transient, expected failure: retry once.
+            HTTP_429_RETRY.fetch_add(1, Ordering::Relaxed);
+            warn!("[ai] 429 - backing off 3s and retrying once");
             tokio::time::sleep(Duration::from_secs(3)).await;
             self.client()
                 .post(&url)
@@ -149,32 +191,11 @@ impl Provider {
         info!("[ai] streaming response: status={status}");
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            warn!("[ai] streaming error body: {}", &body[..body.len().min(500)]);
-            // Some models mandate reasoning and reject the parameter — retry
-            // once without it (mandatory-reasoning models then think anyway).
-            warn!("[ai] retrying stream without reasoning parameter");
-            let retry_payload = json!({
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "stream": true,
-                "max_tokens": 1200,
-            });
-            let retry = self
-                .client()
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .json(&retry_payload)
-                .send()
-                .await
-                .map_err(|e| format!("request failed: {e}"))?;
-            let rstatus = retry.status();
-            if !rstatus.is_success() {
-                let rbody = retry.text().await.unwrap_or_default();
-                return Err(format!("API error {rstatus}: {rbody}"));
-            }
-            info!("[ai] retry (no reasoning param) accepted: status={rstatus}");
-            return Self::consume_stream(retry, on_delta).await;
+            // FAIL LOUDLY. A rejected request means the model or the call is
+            // wrong (e.g. model refuses reasoning:false). No fallback: fix
+            // the cause — change the model or the request.
+            error!("[ai] streaming request REJECTED: {status} {}", truncate_for_log(&body, 800));
+            return Err(format!("API error {status}: {}", truncate_for_log(&body, 800)));
         }
 
         Self::consume_stream(response, on_delta).await
@@ -229,7 +250,8 @@ impl Provider {
         // Upstream pools throw transient 429s when a burst of worker calls
         // lands together — back off once and retry.
         if response.status().as_u16() == 429 {
-            warn!("[ai] 429 rate limited - backing off 3s and retrying once");
+            HTTP_429_RETRY.fetch_add(1, Ordering::Relaxed);
+            warn!("[ai] FALLBACK: 429 - backing off 3s and retrying once");
             tokio::time::sleep(Duration::from_secs(3)).await;
             response = self
                 .client()
@@ -257,7 +279,7 @@ impl Provider {
                 .or_else(|| body["error"]["message"].as_str())
                 .map(str::to_string)
                 .unwrap_or_else(|| body.to_string());
-            warn!("[ai] API error: {}", &detail[..detail.len().min(500)]);
+            warn!("[ai] API error: {}", truncate_for_log(&detail, 500));
             return Err(format!("API error {status}: {detail}"));
         }
         let content = body["choices"][0]["message"]["content"]
@@ -274,12 +296,12 @@ impl Provider {
         Ok((content, body.to_string()))
     }
 
-    /// Structured output with the full FreeLingo fallback ladder:
-    /// 1. native `json_schema` response format (constrained decoding where
-    ///    supported), 2. prompted-JSON fallback for providers that reject the
-    ///    schema, 3. one corrective retry with the deserialization error.
-    /// `validate` enforces content-level rules (non-empty lists etc.) whose
-    /// error message feeds the corrective retry.
+    /// Structured output. Design: the request is ALWAYS schema-constrained;
+    /// a provider that rejects the schema is a model/call problem and fails
+    /// LOUDLY (change the model, don't paper over it). The only retry is the
+    /// corrective one for transient model-output defects (malformed JSON,
+    /// failed validation) — the raw output plus the error go back to the
+    /// model, same category as a 429 retry.
     pub async fn structured_validated<T, F>(
         &self,
         messages: &[Value],
@@ -300,63 +322,60 @@ impl Provider {
         let mut last_error = String::new();
 
         for attempt in 0..3 {
-            // Worker calls run with reasoning DISABLED (a thinking model burns
-            // 30-60s before a mechanical task and can exhaust its token budget
-            // before emitting content). The observer runs with reasoning
-            // ENABLED — the parameter is simply absent so mandatory-reasoning
-            // models accept the request — and gets a larger token budget to
-            // cover thinking + output.
-            let mut payload = if allow_reasoning {
+            // Worker calls run with reasoning DISABLED (a thinking model
+            // burns 30-60s before a mechanical task). The observer runs with
+            // reasoning ENABLED and gets a larger budget for thinking +
+            // output.
+            // Schema-constrained decoding on EVERY attempt. With
+            // require_parameters, a provider that can't honor the schema
+            // fails at request time — loudly — instead of prompting.
+            let payload = if allow_reasoning {
                 json!({
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
                     "max_tokens": 8000,
+                    "frequency_penalty": 0.3,
+                    "provider": {"require_parameters": true},
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {"name": name, "schema": schema}
+                    },
                 })
             } else {
-                let mut p = json!({
+                // 6000: stories emit the whole text as per-word glossed JSON —
+                // a 200-word story is ~3000 output tokens; a tight cap forces
+                // truncation.
+                json!({
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
-                    "max_tokens": 3000,
-                });
-                if attempt <= 1 {
-                    p["reasoning"] = json!({"enabled": false});
-                }
-                p
+                    "max_tokens": 6000,
+                    "reasoning": {"enabled": false},
+                    "frequency_penalty": 0.3,
+                    "provider": {"require_parameters": true},
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {"name": name, "schema": schema}
+                    },
+                })
             };
-            if attempt == 0 {
-                payload["response_format"] = json!({
-                    "type": "json_schema",
-                    "json_schema": {"name": name, "schema": schema}
-                });
-            }
             info!(
-                "[ai] structured attempt {attempt} ({name}): schema={}, messages={}",
-                attempt == 0,
+                "[ai] structured attempt {attempt} ({name}): messages={}",
                 attempts.len()
             );
 
-            let (raw, _raw_body) = match self.post_chat(&payload).await {
-                Ok((raw, raw_body)) => (raw, raw_body),
-                Err(e) => {
-                    // Provider rejected the schema constraint — fall back to
-                    // prompted JSON for subsequent attempts.
-                    warn!("[ai] structured attempt {attempt} request failed: {e}");
-                    if attempt == 0 {
-                        last_error = e;
-                        continue;
-                    }
-                    return Err(last_error);
-                }
-            };
-            debug!("[ai] structured attempt {attempt} raw content: {}", &raw[..raw.len().min(600)]);
+            // Request-level failure (auth, schema rejection, bad model):
+            // FAIL LOUDLY with the provider's actual error. No fallback.
+            let (raw, _raw_body) = self.post_chat(&payload).await?;
+            debug!("[ai] structured attempt {attempt} raw content: {}", truncate_for_log(&raw, 600));
 
             let cleaned = extract_json(&raw);
             match serde_json::from_str::<T>(&cleaned) {
                 Ok(value) => {
                     if let Some(problem) = validate(&value) {
-                        warn!("[ai] structured attempt {attempt} validation failed: {problem}");
+                        VALIDATION_RETRY.fetch_add(1, Ordering::Relaxed);
+                        warn!("[ai] validation failed ({problem}) - corrective retry");
                         last_error = problem;
                         attempts.push(json!({"role": "assistant", "content": raw}));
                         attempts.push(json!({
@@ -373,10 +392,11 @@ impl Provider {
                     return Ok(value);
                 }
                 Err(e) => {
-                    warn!("[ai] structured attempt {attempt} parse failed: {e}");
+                    PARSE_RETRY.fetch_add(1, Ordering::Relaxed);
+                    warn!("[ai] parse failed ({e}) - corrective retry");
                     warn!(
                         "[ai] raw response was: {}",
-                        &raw[..raw.len().min(600)]
+                        truncate_for_log(&raw, 600)
                     );
                     last_error = format!("invalid JSON: {e}");
                     attempts.push(json!({"role": "assistant", "content": raw}));
@@ -390,7 +410,10 @@ impl Provider {
                 }
             }
         }
-        error!("[ai] structured output ({name}) failed after retries: {last_error}");
+        RETRIES_EXHAUSTED.fetch_add(1, Ordering::Relaxed);
+        error!(
+            "[ai] structured output ({name}) failed after all attempts: {last_error}"
+        );
         Err(format!("structured output failed after retries: {last_error}"))
     }
 }

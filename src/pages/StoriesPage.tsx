@@ -3,15 +3,10 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Level, Story } from '../types'
 import { isTauri, logError, logInfo } from '../lib/tauri'
 import { needsSpaceBetween } from '../lib/token-spacing'
+import { GlossPopup, type PopupState } from '../components/GlossPopup'
 
 const STORAGE_PREFIX = 'glossa_story_'
 const LEVELS: Level[] = ['beginner', 'intermediate', 'advanced']
-
-interface PopupState {
-  gloss: string
-  x: number
-  y: number
-}
 
 export default function StoriesPage() {
   const [level, setLevel] = useState<Level>('beginner')
@@ -65,16 +60,7 @@ export default function StoriesPage() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!popup) return
-    function onDocClick(e: MouseEvent) {
-      const target = e.target as HTMLElement
-      if (target.closest('[data-story-word]') || target.closest('[data-story-popup]')) return
-      setPopup(null)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [popup])
+  const closePopup = useCallback(() => setPopup(null), [])
 
   function handleWordClick(
     token: { text: string; gloss: string | null },
@@ -83,8 +69,8 @@ export default function StoriesPage() {
     if (!token.gloss) return
     const rect = event.currentTarget.getBoundingClientRect()
     setPopup((prev) =>
-      prev && prev.gloss === token.gloss ? null : {
-        gloss: token.gloss as string,
+      prev && prev.text === token.gloss ? null : {
+        text: token.gloss as string,
         x: rect.left + rect.width / 2,
         y: Math.max(rect.top - 8, 56),
       }
@@ -153,7 +139,7 @@ export default function StoriesPage() {
                     <span key={tIdx}>
                       {tIdx > 0 && needsSpaceBetween(prev, token.text) ? ' ' : ''}
                       <span
-                        data-story-word={token.gloss ? '1' : undefined}
+                        data-gloss-trigger={token.gloss ? '1' : undefined}
                         onClick={(e) => handleWordClick(token, e)}
                         className={token.gloss ? 'story-word' : undefined}
                       >
@@ -168,20 +154,7 @@ export default function StoriesPage() {
         )}
       </div>
 
-      {popup && (
-        <div
-          data-story-popup="1"
-          className="popup"
-          style={{ left: popup.x, top: popup.y }}
-        >
-          <div className="popup-card">
-            <span>{popup.gloss}</span>
-            <button type="button" className="popup-x" onClick={() => setPopup(null)}>
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
+      {popup && <GlossPopup popup={popup} onClose={closePopup} />}
     </div>
   )
 }

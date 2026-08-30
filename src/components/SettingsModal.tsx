@@ -6,9 +6,33 @@ import {
   logInfo,
   logWarn,
   saveSettings,
+  validateKey,
   NATIVE_LANGUAGES,
   TARGET_LANGUAGES,
 } from '../lib/tauri'
+
+type KeyCheck = { state: 'idle' | 'checking' | 'valid' | 'invalid'; detail: string }
+
+function KeyBadge({ check }: { check: KeyCheck }) {
+  if (check.state === 'idle') return null
+  if (check.state === 'checking')
+    return (
+      <span className="key-badge checking" title="checking key…">
+        ⟳
+      </span>
+    )
+  if (check.state === 'valid')
+    return (
+      <span className="key-badge valid" title={`Key valid — ${check.detail}`}>
+        ✓
+      </span>
+    )
+  return (
+    <span className="key-badge invalid" title={check.detail}>
+      ✕
+    </span>
+  )
+}
 
 export function SettingsModal({
   onClose,
@@ -20,6 +44,44 @@ export function SettingsModal({
   const [settings, setSettings] = useState<Settings | null>(null)
   const [saving, setSaving] = useState(false)
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
+  const [openrouterCheck, setOpenrouterCheck] = useState<KeyCheck>({ state: 'idle', detail: '' })
+  const [groqCheck, setGroqCheck] = useState<KeyCheck>({ state: 'idle', detail: '' })
+
+  // Validate both keys as soon as they change (debounced) — including on
+  // first load, so the user immediately sees whether stored keys are live.
+  useEffect(() => {
+    const key = settings?.openrouter_key
+    if (key === undefined) return
+    if (!key.trim()) {
+      setOpenrouterCheck({ state: 'idle', detail: '' })
+      return
+    }
+    setOpenrouterCheck({ state: 'checking', detail: '' })
+    const t = setTimeout(() => {
+      void validateKey('openrouter', key)
+        .then((s) =>
+          setOpenrouterCheck({ state: s.valid ? 'valid' : 'invalid', detail: s.detail })
+        )
+        .catch((e) => setOpenrouterCheck({ state: 'invalid', detail: String(e) }))
+    }, 600)
+    return () => clearTimeout(t)
+  }, [settings?.openrouter_key])
+
+  useEffect(() => {
+    const key = settings?.groq_key
+    if (key === undefined) return
+    if (!key.trim()) {
+      setGroqCheck({ state: 'idle', detail: '' })
+      return
+    }
+    setGroqCheck({ state: 'checking', detail: '' })
+    const t = setTimeout(() => {
+      void validateKey('groq', key)
+        .then((s) => setGroqCheck({ state: s.valid ? 'valid' : 'invalid', detail: s.detail }))
+        .catch((e) => setGroqCheck({ state: 'invalid', detail: String(e) }))
+    }, 600)
+    return () => clearTimeout(t)
+  }, [settings?.groq_key])
 
   useEffect(() => {
     logInfo('[settings] modal opened')
@@ -99,27 +161,43 @@ export function SettingsModal({
         </p>
         <div className="form-row">
           <label>OpenRouter API key</label>
-          <input
-            type="password"
-            value={settings.openrouter_key}
-            placeholder="sk-or-..."
-            onChange={(e) => setSettings({ ...settings, openrouter_key: e.target.value })}
-          />
+          <div className="key-row">
+            <input
+              type="password"
+              value={settings.openrouter_key}
+              placeholder="sk-or-..."
+              onChange={(e) => setSettings({ ...settings, openrouter_key: e.target.value })}
+            />
+            <KeyBadge check={openrouterCheck} />
+          </div>
         </div>
         <div className="form-row">
           <label>Groq API key (speech-to-text)</label>
-          <input
-            type="password"
-            value={settings.groq_key}
-            placeholder="gsk_..."
-            onChange={(e) => setSettings({ ...settings, groq_key: e.target.value })}
-          />
+          <div className="key-row">
+            <input
+              type="password"
+              value={settings.groq_key}
+              placeholder="gsk_..."
+              onChange={(e) => setSettings({ ...settings, groq_key: e.target.value })}
+            />
+            <KeyBadge check={groqCheck} />
+          </div>
         </div>
         <div className="form-row">
           <label>Model (OpenRouter)</label>
           <input
             value={settings.openrouter_model}
             onChange={(e) => setSettings({ ...settings, openrouter_model: e.target.value })}
+          />
+        </div>
+        <div className="form-row">
+          <label>Observer model (reasoning — steers the tutor)</label>
+          <input
+            value={settings.observer_model ?? ''}
+            placeholder="(same as tutor model)"
+            onChange={(e) =>
+              setSettings({ ...settings, observer_model: e.target.value || null })
+            }
           />
         </div>
         <div className="form-row">

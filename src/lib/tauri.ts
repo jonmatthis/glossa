@@ -63,6 +63,22 @@ export function getSettings(): Promise<Settings> {
   return invoke<Settings>('get_settings')
 }
 
+export interface KeyStatus {
+  valid: boolean
+  detail: string
+}
+
+export function validateKey(
+  provider: 'openrouter' | 'groq',
+  key: string
+): Promise<KeyStatus> {
+  return invoke('validate_key', { provider, key })
+}
+
+export function getDiagnostics(): Promise<[string, number][]> {
+  return invoke('get_diagnostics')
+}
+
 export function saveSettings(settings: Settings): Promise<void> {
   return invoke('save_settings', { settings })
 }

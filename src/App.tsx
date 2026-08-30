@@ -1,11 +1,39 @@
-import { useEffect, useState } from 'react'
+import { Component, useEffect, useState, type ReactNode } from 'react'
 import type { Settings } from './types'
 import { isTauri } from './lib/tauri'
 import GuidedPage from './pages/GuidedPage'
 import StoriesPage from './pages/StoriesPage'
 import { SettingsModal } from './components/SettingsModal'
+import { LogsOverlay } from './components/LogsOverlay'
 
 type Page = 'guided' | 'stories'
+
+// Keeps a render crash from blanking the whole app.
+class PageBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="not-tauri">
+          This view crashed: {this.state.error.message}
+          <br />
+          <br />
+          <button
+            type="button"
+            className="btn"
+            onClick={() => this.setState({ error: null })}
+          >
+            Reload view
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 export default function App() {
   const [page, setPage] = useState<Page>('guided')
@@ -69,11 +97,17 @@ export default function App() {
             needs the Rust core for AI calls, storage, and speech-to-text.
           </div>
         ) : page === 'guided' ? (
-          <GuidedPage />
+          <PageBoundary>
+            <GuidedPage />
+          </PageBoundary>
         ) : (
-          <StoriesPage />
+          <PageBoundary>
+            <StoriesPage />
+          </PageBoundary>
         )}
       </div>
+
+      <LogsOverlay />
 
       {settingsOpen && (
         <SettingsModal

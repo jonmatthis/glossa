@@ -47,11 +47,9 @@ regardless of reality. The Profile's `level_notes` exists but nothing feeds
 it back into the worker prompts. **This is the biggest pedagogical gap:**
 an intermediate learner still gets A2 treatment.
 
-### R2 · Contract drift: TS `Settings` missing `observer_model`
-`src/types.ts:1-8` omits `observer_model`, which the Rust struct has
-(`settings.rs:18`). Saving from the Settings modal serializes without the
-field → serde `default` → `None` → silently reverts a hand-set observer
-model. Also un-editable in the UI. One-line TS fix + a modal field.
+### R2 · Contract drift: TS `Settings` missing `observer_model` — **FIXED**
+TS type now mirrors the Rust struct and the Settings modal exposes the
+observer model; saving no longer silently resets it.
 
 ### R3 · Nothing is committed / no CI / no tests
 One commit ("Initial commit"); the entire `src/`, `src-tauri/`, and docs
@@ -78,17 +76,15 @@ rewriting Japanese-language plan data from Spanish habits, and story caches
 mix. Namespace by target language (or multi-profile) before making
 language-switching a first-class flow.
 
-### R7 · Observer cadence & counters are half-wired
-- `learner_turns` in `AppState` (`lib.rs:16`) is never read or written.
-- `Profile.sessions` is never incremented by code and the observer prompt
-  never asks the model to (so it stays 0).
-- Comment at `commands.rs:262-269` says "Session start + every 3rd turn" but
-  the code runs it **every turn** subject to the flag. Decide, then align
-  code, comment, and docs.
+### R7 · Observer cadence & counters — **partially fixed**
+- `learner_turns` dead counter: **removed**.
+- `Profile.sessions` still never incremented (observer prompt doesn't ask).
+- Cadence: observer runs **every turn**, non-overlapping (comment/code
+  now aligned here and in docs).
 
-### R8 · `features` is dead weight
-`GuidedTurnResult.features` is always `[]` (`commands.rs:503`) yet rendered
-("Grammar spotted") in GuidedPage. Delete it or implement it.
+### R8 · `features` is dead weight — **REMOVED**
+Field deleted from the Rust wire type, TS type, and the "Grammar spotted"
+render block. (Habla·ES leftover; the mechanic cards fully supersede it.)
 
 ### R9 · Mobile-readiness gaps (pre-scaffold)
 `gen/` contains only schemas — `tauri android init` / `tauri ios init` have

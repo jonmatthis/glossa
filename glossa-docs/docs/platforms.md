@@ -51,24 +51,36 @@ npm run tauri build    # → src-tauri/target/release/bundle/...
 
 ## Mobile — the concrete path (Tauri v2)
 
-### Android
+### Android — **working** (Aug 2026)
 
-1. **Scaffold:** `npm run tauri android init` → creates
-   `src-tauri/gen/android` (Gradle project). Today `gen/` holds only schemas.
-2. **Toolchain:** Android Studio (SDK + NDK), Rust targets
-   `aarch64-linux-android`, `armv7-linux-androideabi`, `x86_64-linux-android`,
-   plus `cargo-tauri`'s ndk wiring.
-3. **Permissions:** add `RECORD_AUDIO` to the generated
-   `AndroidManifest.xml`; add a mobile capability file (e.g.
-   `capabilities/mobile.json` with the same permissions; schema moves to the
-   mobile schema).
-4. **STT format:** the Android WebView (Chromium) `MediaRecorder` produces
-   `audio/webm` — matches the hardcoded upload type. Likely works unchanged;
-   verify with a real device.
-5. **Layout:** the fixed split-pane (`GuidedPage`) needs a narrow-viewport
-   mode (stacked chat/breakdown, breakpoint via CSS or a toggle).
-6. **Build/run:** `npm run tauri android dev` (device/emulator), then
-   `npm run tauri android build` for APK/AAB.
+Scaffolded (`tauri android init` → `src-tauri/gen/android`), manifest has
+`RECORD_AUDIO` + `adjustResize`, and a debug APK builds. Verified recipe
+(Windows; env vars are per-shell):
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:NDK_HOME     = "$env:LOCALAPPDATA\Android\Sdk\ndk\27.0.11902837"
+$env:JAVA_HOME    = "C:\Program Files\Android\Android Studio\jbr"   # NOT the Oracle shim
+npx tauri android build --apk --debug --target aarch64
+# → src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+Machine-specific fixes that live in the repo (do not lose them):
+
+1. **`reqwest` uses `rustls-tls`** (`default-features = false`) — native-tls/
+   OpenSSL cannot cross-compile to Android.
+2. **`lib.rs::run()` carries `#[cfg_attr(mobile, tauri::mobile_entry_point)]`**
+   — without it the `.so` fails symbol validation at packaging time.
+3. **`gen/android/buildSrc/.../BuildTask.kt`** wraps npm in `cmd /c` — the
+   default ProcessBuilder spawn of `npm`/`npm.cmd`/`npm.bat` fails on
+   nvm-for-Windows setups. Re-apply if `gen/android` is ever regenerated.
+4. `index.html` viewport has `viewport-fit=cover`; safe-area padding on
+   topbar/composer; touch-action manipulation (see `styles.css`).
+
+Debug APK sideloads fine (GrapheneOS: Settings → Apps → Install unknown
+apps, or just tap the APK). For live dev on a connected phone:
+`npx tauri android dev`. Release APK (`--release`, ~smaller) needs a signing
+key — debug key is auto-generated, release is not.
 
 ### iOS
 

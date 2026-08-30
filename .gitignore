@@ -182,5 +182,8 @@ recorded_objects.npy
 node_modules/
 .docusaurus/
 
-*/build/*
+*/  build/*
 /glossa-docs/build/
+
+# Built APKs
+.build-artifacts/

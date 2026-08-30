@@ -13,11 +13,11 @@ pub struct AppState {
     pub config_dir: std::path::PathBuf,
     pub plan: Mutex<observer::TeachingPlan>,
     pub profile: Mutex<observer::Profile>,
-    pub learner_turns: Mutex<u32>,
     pub recent_mechanics: Mutex<Vec<String>>,
     pub observer_running: Mutex<bool>,
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -64,7 +64,6 @@ pub fn run() {
                 config_dir,
                 plan: Mutex::new(plan),
                 profile: Mutex::new(profile),
-                learner_turns: Mutex::new(0),
                 recent_mechanics: Mutex::new(Vec::new()),
                 observer_running: Mutex::new(false),
             });
@@ -73,6 +72,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
+            commands::validate_key,
+            commands::get_diagnostics,
             commands::guided_turn,
             commands::generate_story,
             commands::transcribe_audio,

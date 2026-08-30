@@ -1,10 +1,8 @@
-import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles.css'
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+// NOTE: No StrictMode — its dev-only double-invocation of effects makes the
+// greeting turn (6 AI calls) fire twice on every mount. Mount effects here
+// are not idempotent-cheap, so StrictMode's safety net costs real money.
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(<App />)

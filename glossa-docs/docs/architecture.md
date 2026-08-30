@@ -84,8 +84,9 @@ Six commands, registered in `lib.rs::run()`:
 |---|---|---|
 | `reply_delta` | Pass 1 token | Appends to pending bubble |
 | `reply_done` | Pass 1 complete | Composer unlocks; turn becomes "analyzing…"; auto-pin breakdown |
-| `analysis_done` | Pass 2 complete | Replaces turn with full `GuidedTurnResult` |
-| `analysis_failed` | Pass 2 dead | Marks turn reply-only, clears stale scaffolds |
+| `analysis_section` | Any one analysis sub-call completes | Merges that section into the turn immediately (progressive hydration — only the finished section's field is populated) |
+| `analysis_done` | All analysis sub-calls settled | Authoritative final merged state, including per-section degradations |
+| `analysis_failed` | Pass 2 dead | Marks turn reply-only; chips fall back to the newest turn that has scaffolds |
 | `plan_updated` | Observer pass complete | Updates Plan drawer + focus chips |
 
 ## The guided turn pipeline
@@ -108,7 +109,8 @@ sequenceDiagram
     C-->>FE: return reply (command resolves — FE unlocks)
     par background
         C->>A: tokens (t=0.1) · translation (t=0.2) · mechanics (t=0.4) · scaffolds (t=0.6)
-        A-->>FE: analysis_done (GuidedTurnResult) | analysis_failed
+        A-->>FE: analysis_section per sub-call as it lands
+        A-->>FE: analysis_done (merged GuidedTurnResult) or analysis_failed
         C->>C: push mechanics into recent_mechanics ring (cap 20)
     and
         C->>O: transcript + plan + profile + recent mechanics (reasoning ON, 8000 tok)
@@ -122,11 +124,16 @@ Key properties:
 
 - **The learner keeps typing while analysis lands.** The command resolves at
   `ReplyDone`; pass 2 and the observer run in `tokio::spawn`ed tasks.
+- **Progressive hydration.** Each analysis sub-call runs in its own task and
+  emits `analysis_section` the moment it finishes — tokens/translation/
+  mechanics/scaffolds appear in the UI as they arrive, never gated behind the
+  slowest call. `analysis_done` remains the authoritative final state.
 - **The observer never overlaps itself.** An `observer_running` mutex flag
   skips a pass if the previous one is still thinking; the next turn picks it
   up. The plan is never more than one turn stale.
 - **Per-section degradation.** The four analysis sub-calls fail independently;
-  a failed section costs only that section (empty tokens, no mechanics, etc.).
+  a failed section simply never emits an `analysis_section` event and costs
+  only that section in the final state (empty tokens, no mechanics, etc.).
 - **Anti-repetition.** `recent_mechanics` (ring buffer, last 20 card titles)
   plus the observer's `taught_ledger` are rendered into an "ALREADY TAUGHT —
   do NOT re-teach" block injected into the reply, mechanics, and scaffolds
@@ -142,7 +149,9 @@ Key properties:
 
 Defaults live in `settings.rs` (`default_model`, `default_observer_model`);
 the worker model is editable in Settings; the observer model is currently
-only editable by hand-editing `settings.json`.
+only editable by hand-editing `settings.json`. Every request payload sets
+`frequency_penalty: 0.3` — a mild guard against degenerate repetition loops
+("¡Hola¡Hola¡Hola…"), which otherwise burn minutes of wall time.
 
 ### Prompt composition
 
@@ -165,26 +174,35 @@ Per-surface builders: `guided_reply_prompt`, `guided_tokens_prompt`,
 `guided_scaffolds_prompt`, `story_prompt` (+ `LEVEL_BANDS` for word-count and
 grammar bands, `resolve_cefr` mapping beginner/intermediate/advanced → A2/B1/C1).
 
-## Structured output: the fallback ladder
+## Error handling: fail loudly, retry only the transient
 
-`ai.rs::structured_validated` (learned the hard way in FreeLingo):
+Design principle: **nothing degrades silently.** A failure is either
+transient (retry with visibility) or a real problem (explode with the actual
+error so the cause gets fixed).
 
-1. **Attempt 0** — native `response_format: json_schema` (constrained
-   decoding where supported). Schemas are generated with `schemars` from the
-   Rust types and **fully `$defs`-inlined first** (`inline_defs`), because
-   several gateways mishandle `$ref` and silently drop nested keys.
-2. **Fallback** — if the provider rejects the schema (request-level failure),
-   retry with prompted JSON (the schema is dropped; the system prompt already
-   says what to produce).
-3. **Corrective retry** — on parse failure or `validate()` rejection, the raw
-   response plus a "Validation error: … return the COMPLETE corrected JSON"
-   user message are appended and the model gets one more shot (up to 3
-   attempts total).
-4. `extract_json` grabs the outermost `{…}` regardless of prose/fences.
+- **429 rate limits** — transient, expected with parallel worker bursts:
+  back off 3s, retry once, count it.
+- **Malformed model output** (prose-wrapped JSON, failed validation) —
+  transient nondeterminism: corrective retry with the error fed back to the
+  model, counted, and logged at WARN. Schema-constrained decoding is applied
+  on **every** attempt.
+- **Everything else fails hard, with the provider's actual error message** —
+  no prompted-JSON fallback, no reasoning-param retry. If a model rejects
+  `json_schema` or `reasoning: false`, the error surfaces to the user and the
+  model gets changed. A model that can't serve the call must not be quietly
+  served by a degraded path.
+- **Per-section analysis failures** are returned to the UI in
+  `GuidedTurnResult.errors` and rendered as visible error boxes in the
+  breakdown pane — a failed tokenizer never silently pretends everything
+  worked.
+- **Corrupt persisted state** (`settings.json`, `plan.json`, `profile.json`)
+  is moved aside to `<name>.bad` with an ERROR log — never silently reset
+  (a silent reset would wipe API keys without a word). Failed writes return
+  errors instead of being discarded.
 
-Streaming has its own fallbacks: a 429 backs off 3s and retries once; a
-request that fails with the `reasoning: {"enabled": false}` parameter is
-retried without it (bumping max_tokens to 1200).
+Retry counters (429 / parse / validation / exhausted) are session-scoped and
+visible in the logs overlay header, so a misbehaving model or prompt shows up
+as climbing numbers instead of silent success.
 
 ## Persistence
 
@@ -218,6 +236,14 @@ interface Turn {
 - History sent upstream = last 30 `(role, content)` pairs from completed turns.
 - The breakdown pane is pinned to the newest completed turn by default; tapping
   a bubble re-pins it (`pinnedId`).
+- **Tap-to-reveal in chat bubbles** (stories-style, shared `GlossPopup`
+  component): below assist 2, word tokens pop their gloss on tap; below
+  assist 3, gloss-less (punctuation) tokens reveal that sentence's
+  translation. Sentences are derived from terminal-punctuation token
+  boundaries and aligned by index against the split translation — on
+  mismatch, the full translation is shown. Scaffolds use best-available
+  hydration: the chips show the newest turn that has any, so the composer is
+  never empty while a fresh analysis runs.
 - Scaffolds come from the **latest** analyzed turn (never an older one — a
   failed analysis clears them).
 - Mic: `MediaRecorder` → webm → base64 → `transcribe_audio`; auto-stop at 10s;

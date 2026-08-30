@@ -2,6 +2,7 @@ export interface Settings {
   openrouter_key: string
   groq_key: string
   openrouter_model: string
+  observer_model: string | null
   target_language: string
   native_language: string
   microphone_device_id: string | null
@@ -32,9 +33,9 @@ export interface GuidedTurnResult {
   reply: string
   translation: string | null
   tokens: GuidedToken[]
-  features: string[]
   mechanics: Mechanic[]
   scaffolds: Scaffolds
+  errors: string[]
 }
 
 export interface StoryToken {
@@ -54,6 +55,13 @@ export interface Story {
 export type GuidedEvent =
   | { type: 'reply_delta'; text: string }
   | { type: 'reply_done'; reply: string }
+  | {
+      type: 'analysis_section'
+      tokens?: GuidedToken[]
+      translation?: string
+      mechanics?: Mechanic[]
+      scaffolds?: Scaffolds
+    }
   | { type: 'analysis_done'; turn: GuidedTurnResult }
   | { type: 'analysis_failed'; error: string }
   | { type: 'plan_updated'; plan: TeachingPlan; profile: Profile }

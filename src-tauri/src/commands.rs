@@ -16,6 +16,80 @@ use crate::settings;
 use crate::settings::Settings;
 use crate::AppState;
 
+// ─── API key validation ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyStatus {
+    pub valid: bool,
+    pub detail: String,
+}
+
+/// Lightweight reachability check for an API key: OpenRouter's auth endpoint
+/// for chat keys, Groq's model list for STT keys. Never logs or returns the
+/// key itself.
+#[tauri::command]
+pub async fn validate_key(provider: String, key: String) -> Result<KeyStatus, String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Ok(KeyStatus {
+            valid: false,
+            detail: "no key entered".into(),
+        });
+    }
+    let url = match provider.as_str() {
+        "openrouter" => "https://openrouter.ai/api/v1/auth/key",
+        "groq" => "https://api.groq.com/openai/v1/models",
+        other => return Err(format!("unknown provider: {other}")),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .bearer_auth(&key)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    let status = response.status();
+    match status.as_u16() {
+        200 => {
+            let detail = if provider == "openrouter" {
+                response
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|v| v["data"]["label"].as_str().map(str::to_string))
+                    .unwrap_or_else(|| "key accepted".into())
+            } else {
+                "key accepted".into()
+            };
+            Ok(KeyStatus { valid: true, detail })
+        }
+        401 | 403 => Ok(KeyStatus {
+            valid: false,
+            detail: format!("key rejected ({status})"),
+        }),
+        s => Ok(KeyStatus {
+            valid: false,
+            detail: format!("unexpected status {s}"),
+        }),
+    }
+}
+
+// ─── Diagnostics ─────────────────────────────────────────────────────────────
+
+/// Retry counters for the logs overlay. Retries here are ONLY for transient
+/// failures (429s, malformed model output fed back for correction) — nothing
+/// falls back silently anywhere in the app.
+#[tauri::command]
+pub fn get_diagnostics() -> Vec<(String, u64)> {
+    crate::ai::retry_stats_snapshot()
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect()
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -29,14 +103,19 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
+pub fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Result<(), String> {
+    // Phone clipboards love appending whitespace to pasted keys — a dirty
+    // key makes providers report "Missing Authentication header".
+    settings.openrouter_key = settings.openrouter_key.trim().to_string();
+    settings.groq_key = settings.groq_key.trim().to_string();
     info!(
         "[cmd] save_settings: target={} native={} model={}",
         settings.target_language,
         settings.native_language,
         settings.openrouter_model
     );
-    settings::persist(&state.config_dir, &settings);
+    // A failed save means the user's keys are NOT on disk — fail loudly.
+    settings::persist(&state.config_dir, &settings)?;
     *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
     Ok(())
 }
@@ -119,9 +198,11 @@ pub struct GuidedTurnResult {
     pub reply: String,
     pub translation: Option<String>,
     pub tokens: Vec<GuidedToken>,
-    pub features: Vec<String>,
     pub mechanics: Vec<Mechanic>,
     pub scaffolds: Scaffolds,
+    /// Analysis sub-calls that FAILED after retries. Nothing degrades
+    /// silently: the breakdown pane renders these as visible errors.
+    pub errors: Vec<String>,
 }
 
 fn sanitize_reply(raw: &str) -> String {
@@ -155,6 +236,16 @@ fn sanitize_reply(raw: &str) -> String {
 pub enum GuidedEvent {
     ReplyDelta { text: String },
     ReplyDone { reply: String },
+    /// Progressive hydration: emitted the moment ONE analysis sub-call
+    /// finishes; only that section's field is Some. The frontend merges
+    /// sections into the turn as they arrive instead of waiting for the
+    /// slowest call.
+    AnalysisSection {
+        tokens: Option<Vec<GuidedToken>>,
+        translation: Option<String>,
+        mechanics: Option<Vec<Mechanic>>,
+        scaffolds: Option<Scaffolds>,
+    },
     AnalysisDone { turn: GuidedTurnResult },
     #[allow(dead_code)]
     AnalysisFailed { error: String },
@@ -380,53 +471,157 @@ pub async fn guided_turn(
     let analysis_channel = on_event.clone();
     let reply_for_analysis = reply.clone();
     let app_for_analysis = app.clone();
+    let worker_key = settings.openrouter_key.clone();
+    let worker_model = settings.openrouter_model.clone();
     tokio::spawn(async move {
         let analysis_started = std::time::Instant::now();
 
-        let (tokens_out, translation_out, mechanics_out, scaffolds_out) = tokio::join!(
-            provider.structured_validated::<TokensOut, _>(
-                &tokens_msgs,
-                0.1,
-                "TokensOut",
-                false,
-                |t: &TokensOut| {
-                    if t.tokens.is_empty() { Some("tokens must not be empty".into()) } else { None }
+        // Each sub-call runs in its own task and hydrates the UI the moment
+        // it lands (AnalysisSection). AnalysisDone at the end remains the
+        // authoritative merged state, including per-section degradations —
+        // so the slowest call never gates the fastest one.
+        let tokens_task = {
+            let provider = Provider::openrouter(&worker_key, &worker_model);
+            let channel = analysis_channel.clone();
+            tokio::spawn(async move {
+                let result = provider
+                    .structured_validated::<TokensOut, _>(
+                        &tokens_msgs,
+                        0.1,
+                        "TokensOut",
+                        false,
+                        |t: &TokensOut| {
+                            if t.tokens.is_empty() {
+                                Some("tokens must not be empty".into())
+                            } else if let Some(bad) = t
+                                .tokens
+                                .iter()
+                                .find(|tok| tok.text.chars().count() > 48)
+                            {
+                                // A "token" spanning a whole sentence means the model
+                                // leaked reasoning into content instead of splitting.
+                                Some(format!(
+                                    "each token must be ONE word with its punctuation attached \
+                                     ('{}...' is far too long). Split the reply word by word and \
+                                     return only the structured tokenization, no explanations.",
+                                    bad.text.chars().take(24).collect::<String>()
+                                ))
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                    .await;
+                if let Ok(out) = &result {
+                    let _ = channel.send(GuidedEvent::AnalysisSection {
+                        tokens: Some(out.tokens.clone()),
+                        translation: None,
+                        mechanics: None,
+                        scaffolds: None,
+                    });
                 }
-            ),
-            provider.structured_validated::<TranslationOut, _>(
-                &translation_msgs,
-                0.2,
-                "TranslationOut",
-                false,
-                |t: &TranslationOut| {
-                    if t.translation.trim().is_empty() { Some("translation must not be empty".into()) } else { None }
+                result
+            })
+        };
+        let translation_task = {
+            let provider = Provider::openrouter(&worker_key, &worker_model);
+            let channel = analysis_channel.clone();
+            tokio::spawn(async move {
+                let result = provider
+                    .structured_validated::<TranslationOut, _>(
+                        &translation_msgs,
+                        0.2,
+                        "TranslationOut",
+                        false,
+                        |t: &TranslationOut| {
+                            if t.translation.trim().is_empty() { Some("translation must not be empty".into()) } else { None }
+                        },
+                    )
+                    .await;
+                if let Ok(out) = &result {
+                    let _ = channel.send(GuidedEvent::AnalysisSection {
+                        tokens: None,
+                        translation: Some(out.translation.clone()),
+                        mechanics: None,
+                        scaffolds: None,
+                    });
                 }
-            ),
-            provider.structured_validated::<MechanicsOut, _>(
-                &mechanics_msgs,
-                0.4,
-                "MechanicsOut",
-                false,
-                |m: &MechanicsOut| {
-                    if m.mechanics.is_empty() { Some("mechanics must not be empty - every reply teaches something".into()) } else { None }
+                result
+            })
+        };
+        let mechanics_task = {
+            let provider = Provider::openrouter(&worker_key, &worker_model);
+            let channel = analysis_channel.clone();
+            tokio::spawn(async move {
+                let result = provider
+                    .structured_validated::<MechanicsOut, _>(
+                        &mechanics_msgs,
+                        0.4,
+                        "MechanicsOut",
+                        false,
+                        |m: &MechanicsOut| {
+                            if m.mechanics.is_empty() { Some("mechanics must not be empty - every reply teaches something".into()) } else { None }
+                        },
+                    )
+                    .await;
+                if let Ok(out) = &result {
+                    let _ = channel.send(GuidedEvent::AnalysisSection {
+                        tokens: None,
+                        translation: None,
+                        mechanics: Some(out.mechanics.clone()),
+                        scaffolds: None,
+                    });
                 }
-            ),
-            provider.structured_validated::<ScaffoldsOut, _>(
-                &scaffolds_msgs,
-                0.6,
-                "ScaffoldsOut",
-                false,
-                |sc: &ScaffoldsOut| {
-                    if sc.scaffolds.replies.is_empty()
-                        || sc.scaffolds.frames.is_empty()
-                        || sc.scaffolds.starters.is_empty()
-                    {
-                        Some("all three scaffold lists must be populated".into())
-                    } else {
-                        None
-                    }
+                result
+            })
+        };
+        let scaffolds_task = {
+            let provider = Provider::openrouter(&worker_key, &worker_model);
+            let channel = analysis_channel.clone();
+            tokio::spawn(async move {
+                let result = provider
+                    .structured_validated::<ScaffoldsOut, _>(
+                        &scaffolds_msgs,
+                        0.6,
+                        "ScaffoldsOut",
+                        false,
+                        |sc: &ScaffoldsOut| {
+                            if sc.scaffolds.replies.is_empty()
+                                || sc.scaffolds.frames.is_empty()
+                                || sc.scaffolds.starters.is_empty()
+                            {
+                                Some("all three scaffold lists must be populated".into())
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                    .await;
+                if let Ok(out) = &result {
+                    let _ = channel.send(GuidedEvent::AnalysisSection {
+                        tokens: None,
+                        translation: None,
+                        mechanics: None,
+                        scaffolds: Some(out.scaffolds.clone()),
+                    });
                 }
-            ),
+                result
+            })
+        };
+
+        let (tokens_out, translation_out, mechanics_out, scaffolds_out) = (
+            tokens_task
+                .await
+                .unwrap_or_else(|e| Err(format!("tokens task panicked: {e}"))),
+            translation_task
+                .await
+                .unwrap_or_else(|e| Err(format!("translation task panicked: {e}"))),
+            mechanics_task
+                .await
+                .unwrap_or_else(|e| Err(format!("mechanics task panicked: {e}"))),
+            scaffolds_task
+                .await
+                .unwrap_or_else(|e| Err(format!("scaffolds task panicked: {e}"))),
         );
 
         // Per-section degradation: a failed sub-call costs its section only.
@@ -500,9 +695,9 @@ pub async fn guided_turn(
                 reply: reply_for_analysis,
                 translation,
                 tokens,
-                features: Vec::new(),
                 mechanics,
                 scaffolds,
+                errors: failures,
             },
         });
     });
@@ -683,7 +878,7 @@ pub async fn transcribe_audio(
         .map_err(|e| e.to_string())?;
     let response = client
         .post("https://api.groq.com/openai/v1/audio/transcriptions")
-        .bearer_auth(&settings.groq_key)
+        .bearer_auth(settings.groq_key.trim())
         .multipart(form)
         .send()
         .await

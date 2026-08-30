@@ -90,6 +90,12 @@ turns, user first. Roles: `user` / `assistant`.
 | `pos` | string \| null | Universal POS tag: NOUN, VERB, ADJ, ADV, PRON, DET, ADP, CCONJ, SCONJ, AUX, PART, INTJ, NUM, PROPN, PUNCT. |
 | `notable` | bool | Worth the learner's attention (inflection, construction, word order). **Max 3 per reply.** Highlighted in both panes. |
 
+Validation: list non-empty **and** no token longer than 48 chars — a
+sentence-length "token" means the model leaked reasoning into content instead
+of splitting (observed with deepseek-v4-flash; the corrective retry then
+re-asks for a word-by-word split). Failure degrades to empty tokens, and the
+UI falls back to rendering the raw reply.
+
 Rendering joins tokens with spaces unless punctuation dictates otherwise
 (`lib/token-spacing.ts`: no space before `.!?,;:…»"')\]`, none after `¿¡«"(\[`).
 

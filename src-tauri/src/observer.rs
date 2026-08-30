@@ -149,24 +149,45 @@ impl ObserverOutput {
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
+/// Load one document. A missing file is a fresh install (fine). A CORRUPT
+/// file must never be silently discarded: move it aside and scream.
+fn load_document<T: serde::de::DeserializeOwned + Default>(dir: &Path, name: &str) -> T {
+    let path = dir.join(name);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(_) => return T::default(), // fresh install — nothing to load
+    };
+    match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            let bad = dir.join(format!("{name}.bad"));
+            let _ = std::fs::rename(&path, &bad);
+            log::error!(
+                "{name} was CORRUPT ({e}) - moved to {}. Starting fresh; the old file is preserved.",
+                bad.display()
+            );
+            T::default()
+        }
+    }
+}
+
 pub fn load_documents(dir: &Path) -> (TeachingPlan, Profile) {
-    let plan = std::fs::read_to_string(dir.join("plan.json"))
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
-    let profile = std::fs::read_to_string(dir.join("profile.json"))
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
-    (plan, profile)
+    (
+        load_document(dir, "plan.json"),
+        load_document(dir, "profile.json"),
+    )
 }
 
 pub fn persist_documents(dir: &Path, plan: &TeachingPlan, profile: &Profile) {
     if let Ok(raw) = serde_json::to_string_pretty(plan) {
-        let _ = std::fs::write(dir.join("plan.json"), raw);
+        if let Err(e) = std::fs::write(dir.join("plan.json"), raw) {
+            log::error!("FAILED to persist plan.json: {e} - teaching plan will be lost");
+        }
     }
     if let Ok(raw) = serde_json::to_string_pretty(profile) {
-        let _ = std::fs::write(dir.join("profile.json"), raw);
+        if let Err(e) = std::fs::write(dir.join("profile.json"), raw) {
+            log::error!("FAILED to persist profile.json: {e} - profile will be lost");
+        }
     }
 }
 
