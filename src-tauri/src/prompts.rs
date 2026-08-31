@@ -4,12 +4,6 @@
 
 use crate::languages::overlay;
 
-const ASSIST_LEVEL_NAMES: [&str; 4] = [
-    "Immersion (no help in the chat pane; the learner sees the reply only)",
-    "Light (key words underlined; short sentence starters)",
-    "Guided (per-word glosses; fill-in-the-blank reply frames)",
-    "Full support (full translation; complete tap-to-send replies)",
-];
 
 pub fn persona_block(
     role: &str,
@@ -56,13 +50,8 @@ pub fn guided_reply_prompt(
     target_language_name: &str,
     cefr_level: &str,
     native_language_name: &str,
-    assist_level: u8,
     directives: &str,
 ) -> String {
-    let level = ASSIST_LEVEL_NAMES
-        .get(assist_level as usize)
-        .copied()
-        .unwrap_or(ASSIST_LEVEL_NAMES[3]);
     let overlay_section = overlay(target_language);
     format!(
         "{persona}\n\n\
@@ -73,7 +62,6 @@ pub fn guided_reply_prompt(
          - LENGTH: One to three short sentences.\n\
          - SHELTERING: Use mostly high-frequency vocabulary the student already likely knows, plus at most one or two new words per reply (comprehensible input, i+1). Introduce new grammar gently and recycle earlier structures.\n\
          - RECASTS: If the student's message contains a small mistake, model the correct form naturally in your reply (recast). Never explicitly say \"that was wrong\".\n\
-         - Current assist level: {level}.\n\
          {emoji}\n\
          {overlay}\n\n\
          {directives}\n\n\
@@ -82,7 +70,6 @@ pub fn guided_reply_prompt(
         rules = mandatory_rules(target_language_name, "language tutor"),
         always = always_respond_rule(target_language_name),
         tln = target_language_name,
-        level = level,
         emoji = no_emoji_rule(),
         overlay = overlay_section,
         directives = directives,
@@ -154,16 +141,11 @@ pub fn guided_mechanics_prompt(
 pub fn guided_scaffolds_prompt(
     target_language_name: &str,
     native_language_name: &str,
-    assist_level: u8,
     directives: &str,
 ) -> String {
-    let level = ASSIST_LEVEL_NAMES
-        .get(assist_level as usize)
-        .copied()
-        .unwrap_or(ASSIST_LEVEL_NAMES[3]);
     format!(
-        "You prepare scaffolds for a {tln} learner's NEXT message at assist\n\
-          level ({level}). Given the conversation so far, write:\n\
+        "You prepare scaffolds for a {tln} learner's NEXT message. Given the \
+         conversation so far, write:\n\
           - replies: exactly 2 complete sentences in {tln} the learner could\n\
             plausibly send next\n\
           - frames: exactly 2 fill-in-the-blank sentences in {tln} using ___\n\
@@ -174,12 +156,11 @@ pub fn guided_scaffolds_prompt(
           Use the session focus structures where natural.\n\
           {directives}\n\
          Respond with the structured scaffolds you have been configured to produce.",
-        tln = target_language_name,
-        native = native_language_name,
-        level = level,
-        directives = directives,
-    )
-}
+         tln = target_language_name,
+         native = native_language_name,
+         directives = directives,
+     )
+ }
 
 const LEVEL_BANDS: [(&str, &str, &str); 3] = [
     ("beginner", "A1-A2", "40-70 words in one or two paragraphs. Very short, simple sentences (5-10 words), present tense, high-frequency everyday vocabulary."),
@@ -283,5 +264,73 @@ pub fn coach_user_message(
         latest = latest_message,
         notes = if level_notes.trim().is_empty() { "(none yet)" } else { level_notes },
         topic = topic_line,
+    )
+}
+
+pub fn learner_tokens_prompt(target_language_name: &str, native_language_name: &str) -> String {
+    format!(
+        "Analyze the LEARNER'S latest message in {tln}. The learner is a student:\n\
+          their words may contain mistakes, mixed languages, or questions about\n\
+          how to say something.\n\n\
+         1. tokenize: split the message word by word (punctuation attached to\n\
+            the preceding word), in order, never skipping words. Give each token\n\
+            a short {native} gloss IN CONTEXT - what the learner MEANT, including\n\
+            for their mistakes. Mark at most 3 tokens as notable.\n\
+         2. translation: a natural {native} translation of what the learner\n\
+            actually communicated (not a word-for-word rendering).\n\n\
+         Respond with the structured analysis you have been configured to produce.",
+        tln = target_language_name,
+        native = native_language_name,
+    )
+}
+
+pub fn coach_thread_system_prompt(target_language_name: &str, native_language_name: &str) -> String {
+    format!(
+        "You are the learner's private COACH in a side-channel chat - the Cyrano\n\
+         on their shoulder during a {tln} conversation with a native speaker.\n\n\
+         THIS THREAD IS PRIVATE. The native-speaker partner never sees it and\n\
+         must never learn you exist. Help the learner stealthily.\n\n\
+         You see the primary conversation, the teaching plan, the learner\n\
+         profile, and your own past advice. The learner will ask grammar\n\
+         questions, request phrasings, vent, or ask you to decode what the\n\
+         partner said. Reply in their natural mix of {native} and {tln}:\n\
+         explanations in {native}, example phrases in {tln}. Be concise (2-6\n\
+         sentences), concrete, and quote the actual conversation. If a phrase\n\
+         you provide would help, mark it clearly.\n\n\
+         Never suggest revealing this channel to the partner. Never break the\n\
+         fiction that the partner conversation is real.",
+        tln = target_language_name,
+        native = native_language_name,
+    )
+}
+
+pub fn analysis_ask_system_prompt(target_language_name: &str, native_language_name: &str) -> String {
+    format!(
+        "You are the grammar and language assistant in the Analysis pane of a\n\
+         {tln} learning app. The learner asks about words, conjugations, tense,\n\
+         usage, or constructions from their conversation. Answer in {native},\n\
+         with {tln} examples inline. Concise (2-6 sentences), precise, honest\n\
+         about nuance. Quote the exact words being asked about.",
+        tln = target_language_name,
+        native = native_language_name,
+    )
+}
+
+pub fn word_insight_system_prompt(target_language_name: &str, native_language_name: &str) -> String {
+    format!(
+        "You are a {tln} morphology and grammar analyzer for language learners.\n\
+         Given a WORD and the SENTENCE it appears in, analyze the word AS USED\n\
+         in that sentence and return:\n\
+         - lemma: the dictionary form of the word\n\
+         - pos: part of speech (noun, verb, adjective, ...)\n\
+         - form: conjugation/declension details for this usage - tense, mood,\n\
+           person, number, gender as applicable\n\
+         - role: the word's grammatical role in this sentence (subject,\n\
+           direct object, ...\n\
+         - usage: one practical note for the learner, in {native} - what to\n\
+           watch out for, common confusions, or when this form is used\n\n\
+         If the word is ambiguous, analyze it as used in the sentence. Be precise.",
+        tln = target_language_name,
+        native = native_language_name,
     )
 }

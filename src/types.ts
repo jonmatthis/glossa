@@ -45,6 +45,8 @@ export interface GuidedTurnResult {
   reply: string
   translation: string | null
   tokens: GuidedToken[]
+  user_tokens: GuidedToken[]
+  user_translation: string | null
   mechanics: Mechanic[]
   scaffolds: Scaffolds
   errors: string[]
@@ -91,6 +93,8 @@ export type GuidedEvent =
       type: 'analysis_section'
       tokens?: GuidedToken[]
       translation?: string
+      user_tokens?: GuidedToken[]
+      user_translation?: string
       mechanics?: Mechanic[]
       scaffolds?: Scaffolds
     }

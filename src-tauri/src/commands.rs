@@ -16,6 +16,7 @@ use crate::prompts;
 use crate::settings;
 use crate::settings::Settings;
 use crate::AppState;
+use std::path::Path;
 use futures_util::StreamExt;
 use std::time::Duration;
 
@@ -299,6 +300,11 @@ pub struct CoachCorrection {
     pub kind: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CoachReply {
+    pub reply: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoachFeedback {
     /// 1-3 warm sentences to the learner. Mostly native language; answers
@@ -451,12 +457,12 @@ pub struct MechanicsOut {
     pub mechanics: Vec<Mechanic>,
 }
 
-/// FLAT on the wire on purpose: the old `{scaffolds: {replies, ...}}`
-/// wrapper made models return the inner object at the top level. Flat shape
-/// + schema-level minItems = models comply. `Scaffolds` below stays the
-/// public turn shape.
-/// The `min = 1` schema constraints mean constrained providers cannot emit
-/// empty lists; the validate() closure remains as the sense-checker.
+/// FLAT on the wire on purpose: the old `{scaffolds: {replies, ...}}` wrapper
+/// made models return the inner object at the top level. Flat shape plus
+/// schema-level minItems keeps models compliant; `Scaffolds` below stays the
+/// public turn shape, and the schema-level list constraints mean constrained
+/// providers cannot emit empty lists (the validate closure stays as the
+/// sense-checker).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScaffoldsOut {
     #[schemars(length(min = 1))]
@@ -467,11 +473,25 @@ pub struct ScaffoldsOut {
     pub starters: Vec<String>,
 }
 
+/// Tokenization + translation of the LEARNER's own message — the "did I say
+/// what I meant" check.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearnerTokensOut {
+    /// Natural native-language translation of what the learner communicated.
+    #[schemars(length(min = 1))]
+    pub translation: String,
+    #[schemars(length(min = 1))]
+    pub tokens: Vec<GuidedToken>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GuidedTurnResult {
     pub reply: String,
     pub translation: Option<String>,
     pub tokens: Vec<GuidedToken>,
+    /// Tokenization + translation of the LEARNER's own message.
+    pub user_tokens: Vec<GuidedToken>,
+    pub user_translation: Option<String>,
     pub mechanics: Vec<Mechanic>,
     pub scaffolds: Scaffolds,
     /// Analysis sub-calls that FAILED after retries. Nothing degrades
@@ -518,6 +538,9 @@ fn sanitize_reply(raw: &str) -> String {
         AnalysisSection {
             tokens: Option<Vec<GuidedToken>>,
             translation: Option<String>,
+            /// Learner-message tokenization + translation.
+            user_tokens: Option<Vec<GuidedToken>>,
+            user_translation: Option<String>,
             mechanics: Option<Vec<Mechanic>>,
             scaffolds: Option<Scaffolds>,
         },
@@ -535,12 +558,12 @@ fn sanitize_reply(raw: &str) -> String {
     }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn guided_turn(
     app: AppHandle,
     state: State<'_, AppState>,
     message: String,
     history: Vec<ChatTurn>,
-    assist_level: u8,
     greeting: bool,
     level: Option<String>,
     topic: Option<String>,
@@ -558,7 +581,7 @@ pub async fn guided_turn(
     let started = std::time::Instant::now();
     let target = settings.target_language.clone();
     info!(
-        "[cmd] guided_turn start: greeting={greeting} assist_level={assist_level} message_len={} history={} target={target}",
+        "[cmd] guided_turn start: greeting={greeting} message_len={} history={} target={target}",
         message.len(),
         history.len(),
     );
@@ -600,7 +623,6 @@ pub async fn guided_turn(
         &tln,
         &cefr,
         &native,
-        assist_level,
         &directives,
     );
     let mut reply_messages = vec![json!({"role": "system", "content": reply_system})];
@@ -774,7 +796,7 @@ pub async fn guided_turn(
         json!({"role": "user", "content": format!("Learner message ({} level):\n{}\n\nTutor reply:\n{}", cefr, learner_message, reply)}),
     ];
     let scaffolds_msgs = vec![
-        json!({"role": "system", "content": prompts::guided_scaffolds_prompt(&tln, &native, assist_level, &directives)}),
+        json!({"role": "system", "content": prompts::guided_scaffolds_prompt(&tln, &native, &directives)}),
         json!({"role": "user", "content": format!("Learner message:\n{}\n\nTutor reply:\n{}", learner_message, reply)}),
     ];
 
@@ -783,6 +805,10 @@ pub async fn guided_turn(
     let app_for_analysis = app.clone();
     let worker_key = settings.openrouter_key.clone();
     let worker_model = settings.openrouter_model.clone();
+    // Cloned before the analysis `async move` captures them — the coach
+    // spawn needs them later.
+    let coach_tln = tln.clone();
+    let coach_native = native.clone();
     tokio::spawn(async move {
         let analysis_started = std::time::Instant::now();
 
@@ -819,6 +845,8 @@ pub async fn guided_turn(
                     let _ = channel.send(GuidedEvent::AnalysisSection {
                         tokens: Some(out.tokens.clone()),
                         translation: None,
+                        user_tokens: None,
+                        user_translation: None,
                         mechanics: None,
                         scaffolds: None,
                     });
@@ -845,6 +873,8 @@ pub async fn guided_turn(
                     let _ = channel.send(GuidedEvent::AnalysisSection {
                         tokens: None,
                         translation: Some(out.translation.clone()),
+                        user_tokens: None,
+                        user_translation: None,
                         mechanics: None,
                         scaffolds: None,
                     });
@@ -871,6 +901,8 @@ pub async fn guided_turn(
                     let _ = channel.send(GuidedEvent::AnalysisSection {
                         tokens: None,
                         translation: None,
+                        user_tokens: None,
+                        user_translation: None,
                         mechanics: Some(out.mechanics.clone()),
                         scaffolds: None,
                     });
@@ -904,6 +936,8 @@ pub async fn guided_turn(
                     let _ = channel.send(GuidedEvent::AnalysisSection {
                         tokens: None,
                         translation: None,
+                        user_tokens: None,
+                        user_translation: None,
                         mechanics: None,
                         scaffolds: Some(Scaffolds {
                             replies: out.replies.clone(),
@@ -916,7 +950,42 @@ pub async fn guided_turn(
             })
         };
 
-        let (tokens_out, translation_out, mechanics_out, scaffolds_out) = (
+        let learner_tokens_task = {
+            let provider = Provider::openrouter(&worker_key, &worker_model);
+            let channel = analysis_channel.clone();
+            let learner_msgs = vec![
+                json!({"role": "system", "content": prompts::learner_tokens_prompt(&tln, &native)}),
+                json!({"role": "user", "content": format!("Learner message to analyze:\n{}", learner_message)}),
+            ];
+            tokio::spawn(async move {
+                let result = provider
+                    .structured_validated::<LearnerTokensOut, _>(
+                        &learner_msgs,
+                        0.1,
+                        "LearnerTokensOut",
+                        false,
+                        |t: &LearnerTokensOut| {
+                            if t.tokens.is_empty() || t.translation.trim().is_empty() {
+                                Some("tokens and translation must not be empty".into())
+                            } else { None }
+                        },
+                    )
+                    .await;
+                if let Ok(out) = &result {
+                    let _ = channel.send(GuidedEvent::AnalysisSection {
+                        tokens: None,
+                        translation: None,
+                        user_tokens: Some(out.tokens.clone()),
+                        user_translation: Some(out.translation.clone()),
+                        mechanics: None,
+                        scaffolds: None,
+                    });
+                }
+                result
+            })
+        };
+
+        let (tokens_out, translation_out, mechanics_out, scaffolds_out, user_tokens_out) = (
             tokens_task
                 .await
                 .unwrap_or_else(|e| Err(format!("tokens task panicked: {e}"))),
@@ -929,6 +998,9 @@ pub async fn guided_turn(
             scaffolds_task
                 .await
                 .unwrap_or_else(|e| Err(format!("scaffolds task panicked: {e}"))),
+            learner_tokens_task
+                .await
+                .unwrap_or_else(|e| Err(format!("user tokens task panicked: {e}"))),
         );
 
         // Per-section degradation: a failed sub-call costs its section only.
@@ -969,6 +1041,13 @@ pub async fn guided_turn(
                 }
             }
         };
+        let (user_tokens, user_translation) = match user_tokens_out {
+            Ok(t) => (t.tokens, Some(t.translation)),
+            Err(e) => {
+                failures.push(format!("your words: {e}"));
+                (Vec::new(), None)
+            }
+        };
 
         if failures.is_empty() {
             info!(
@@ -1006,6 +1085,8 @@ pub async fn guided_turn(
                 reply: reply_for_analysis,
                 translation,
                 tokens,
+                user_tokens,
+                user_translation,
                 mechanics,
                 scaffolds,
                 errors: failures,
@@ -1021,8 +1102,6 @@ pub async fn guided_turn(
         let coach_channel = on_event.clone();
         let coach_key = settings.openrouter_key.clone();
         let coach_model = settings.openrouter_model.clone();
-        let coach_tln = tln.clone();
-        let coach_native = native.clone();
         let coach_transcript: Vec<String> = history
             .iter()
             .rev()
@@ -1037,7 +1116,7 @@ pub async fn guided_turn(
             })
             .chain(std::iter::once(format!(
                 "LEARNER: {}",
-                message.trim().to_string()
+                message.trim()
             )))
             .collect();
         info!("[cmd] coach pass triggered (model={coach_model})");
@@ -1091,6 +1170,343 @@ pub async fn guided_turn(
     }
 
     Ok(reply)
+}
+
+// ─── Coach thread (interactive sidebar chat — PRIVATE to the learner) ────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoachChatMessage {
+    /// "user" (learner) or "coach".
+    pub role: String,
+    pub content: String,
+}
+
+const COACH_THREAD_FILE: &str = "coach_thread.json";
+const COACH_THREAD_CAP: usize = 40;
+
+pub fn init_coach_thread(dir: &Path) -> Vec<CoachChatMessage> {
+    let path = dir.join(COACH_THREAD_FILE);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(), // fresh install
+    };
+    match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            let bad = dir.join(format!("{COACH_THREAD_FILE}.bad"));
+            let _ = std::fs::rename(&path, &bad);
+            log::error!("coach_thread.json was CORRUPT ({e}) - moved aside, thread starts fresh");
+            Vec::new()
+        }
+    }
+}
+
+fn persist_coach_thread(dir: &Path, thread: &[CoachChatMessage]) {
+    match serde_json::to_string_pretty(thread) {
+        Ok(raw) => {
+            if let Err(e) = std::fs::write(dir.join(COACH_THREAD_FILE), raw) {
+                log::error!("FAILED to persist coach thread: {e}");
+            }
+        }
+        Err(e) => log::error!("coach thread serialization failed: {e}"),
+    }
+}
+
+#[tauri::command]
+pub fn get_coach_thread(state: State<'_, AppState>) -> Result<Vec<CoachChatMessage>, String> {
+    Ok(state
+        .coach_thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone())
+}
+
+#[tauri::command]
+pub fn coach_thread_clear(state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .coach_thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+    let dir = state.config_dir.clone();
+    persist_coach_thread(&dir, &[]);
+    Ok(())
+}
+
+/// Ask the coach a direct question. Sees the primary conversation, the plan,
+/// the profile, and this thread. PRIVATE: the native-speaker agent never
+/// sees any of it (Cyrano principle).
+#[tauri::command]
+pub async fn coach_ask(
+    state: State<'_, AppState>,
+    question: String,
+    context: String,
+) -> Result<CoachReply, String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("empty question".into());
+    }
+    let started = std::time::Instant::now();
+    let stored = state
+        .settings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if stored.openrouter_key.trim().is_empty() {
+        return Err("No OpenRouter API key configured.".into());
+    }
+    let tln = crate::languages::language_display(&stored.target_language);
+    let native = crate::languages::native_display(&stored.native_language);
+
+    let thread = state
+        .coach_thread
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let (plan, profile) = {
+        let plan = state.plan.lock().unwrap_or_else(|p| p.into_inner());
+        let profile = state.profile.lock().unwrap_or_else(|p| p.into_inner());
+        (plan.clone(), profile.clone())
+    };
+
+    let mut messages = vec![json!({
+        "role": "system",
+        "content": format!(
+            "{}\n\nCURRENT TEACHING PLAN:\n{}\n\nLEARNER PROFILE:\n{}",
+            prompts::coach_thread_system_prompt(&tln, &native),
+            serde_json::to_string_pretty(&plan).unwrap_or_default(),
+            serde_json::to_string_pretty(&profile).unwrap_or_default(),
+        ),
+    })];
+    for m in thread.iter().rev().take(COACH_THREAD_CAP).rev() {
+        let role = if m.role == "user" { "user" } else { "assistant" };
+        messages.push(json!({"role": role, "content": m.content}));
+    }
+    messages.push(json!({
+        "role": "user",
+        "content": format!("PRIMARY CONVERSATION (recent lines):\n{context}\n\nYOUR MESSAGE:\n{question}")
+    }));
+
+    let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
+    let reply = provider
+        .chat_streaming(&messages, 0.5, &mut |_| {})
+        .await
+        .map_err(|e| format!("coach ask failed: {e}"))?;
+    let reply = sanitize_reply(&reply);
+    info!(
+        "[cmd] coach ask answered in {:.1}s: {} chars",
+        started.elapsed().as_secs_f32(),
+        reply.len()
+    );
+
+    {
+        let mut thread = state
+            .coach_thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        thread.push(CoachChatMessage {
+            role: "user".into(),
+            content: question.clone(),
+        });
+        thread.push(CoachChatMessage {
+            role: "coach".into(),
+            content: reply.clone(),
+        });
+        let len = thread.len();
+        if len > COACH_THREAD_CAP {
+            thread.drain(0..len - COACH_THREAD_CAP);
+        }
+        let dir = state.config_dir.clone();
+        persist_coach_thread(&dir, &thread);
+    }
+    Ok(CoachReply { reply })
+}
+
+/// Ask a question about the Analysis pane content (grammar, a word, a
+/// construction). Session-scoped: answers are not persisted.
+#[tauri::command]
+pub async fn analysis_ask(
+    state: State<'_, AppState>,
+    question: String,
+    context: String,
+) -> Result<String, String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("empty question".into());
+    }
+    let stored = state
+        .settings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if stored.openrouter_key.trim().is_empty() {
+        return Err("No OpenRouter API key configured.".into());
+    }
+    let tln = crate::languages::language_display(&stored.target_language);
+    let native = crate::languages::native_display(&stored.native_language);
+    let messages = vec![
+        json!({"role": "system", "content": prompts::analysis_ask_system_prompt(&tln, &native)}),
+        json!({"role": "user", "content": format!("CONVERSATION EXCERPT:\n{context}\n\nQUESTION:\n{question}")}),
+    ];
+    let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
+    provider
+        .chat_streaming(&messages, 0.3, &mut |_| {})
+        .await
+        .map(|r| sanitize_reply(&r))
+        .map_err(|e| format!("analysis ask failed: {e}"))
+}
+
+// ─── Standalone scaffold generation (steer-row driven) ───────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ScaffoldRequest {
+    history: Vec<ChatTurn>,
+    level: Option<String>,
+    topic: Option<String>,
+}
+
+/// Regenerate next-message scaffolds on demand — the steer row calls this
+/// when the learner changes level or topic, so suggestions never go stale.
+#[tauri::command]
+pub async fn generate_scaffolds(
+    state: State<'_, AppState>,
+    req: ScaffoldRequest,
+) -> Result<Scaffolds, String> {
+    let stored = state
+        .settings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if stored.openrouter_key.trim().is_empty() {
+        return Err("No OpenRouter API key configured.".into());
+    }
+    let tln = language_display(&stored.target_language);
+    let native = native_display(&stored.native_language);
+    let cefr = match req.level.as_deref() {
+        Some("intermediate") => "B1",
+        Some("advanced") => "C1",
+        _ => "A2",
+    };
+    let topic_directive = match req.topic.as_deref() {
+        Some(t) if !t.trim().is_empty() => format!(
+            "\n- TOPIC STEERING: the learner chose the topic \"{t}\". Steer the \
+             conversation toward it when natural; if the conversation stalls, \
+             offer one question about it."
+        ),
+        _ => String::new(),
+    };
+    let plan_directives = {
+        let plan = state.plan.lock().unwrap_or_else(|p| p.into_inner());
+        observer::directives_block(&plan, &[])
+    };
+    let directives = format!("{plan_directives}{topic_directive}");
+    let transcript: Vec<String> = req
+        .history
+        .iter()
+        .rev()
+        .take(8)
+        .rev()
+        .map(|t| {
+            format!(
+                "{}: {}",
+                if t.role == "user" { "LEARNER" } else { "NATIVE" },
+                t.content
+            )
+        })
+        .collect();
+    let messages = vec![
+        json!({"role": "system", "content": prompts::guided_scaffolds_prompt(&tln, &native, &directives)}),
+        json!({"role": "user", "content": format!(
+            "CONVERSATION SO FAR:\n{}\n\nWrite scaffolds for the learner's NEXT message.",
+            transcript.join("\n")
+        )}),
+    ];
+    let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
+    let out = provider
+        .structured_validated::<ScaffoldsOut, _>(
+            &messages,
+            0.6,
+            "ScaffoldsOut",
+            false,
+            |sc: &ScaffoldsOut| {
+                if sc.replies.is_empty() || sc.frames.is_empty() || sc.starters.is_empty() {
+                    Some("all three scaffold lists must be populated".into())
+                } else {
+                    None
+                }
+            },
+        )
+        .await?;
+    Ok(Scaffolds {
+        replies: out.replies,
+        frames: out.frames,
+        starters: out.starters,
+    })
+}
+
+// ─── Word insight (hold-to-inspect modal) ────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WordInsight {
+    /// Dictionary form of the word.
+    #[schemars(length(min = 1))]
+    pub lemma: String,
+    /// Part of speech as used in the sentence.
+    #[schemars(length(min = 1))]
+    pub pos: String,
+    /// Conjugation/declension details: tense, mood, person, number, gender.
+    #[schemars(length(min = 1))]
+    pub form: String,
+    /// Grammatical role in the sentence.
+    #[schemars(length(min = 1))]
+    pub role: String,
+    /// One practical usage note, in the learner's native language.
+    #[schemars(length(min = 1))]
+    pub usage: String,
+}
+
+/// Deep word analysis: lemma, morphology, grammatical role, usage note.
+#[tauri::command]
+pub async fn word_insight(
+    state: State<'_, AppState>,
+    word: String,
+    sentence: String,
+) -> Result<WordInsight, String> {
+    let word = word.trim().to_string();
+    let sentence = sentence.trim().to_string();
+    if word.is_empty() {
+        return Err("no word given".into());
+    }
+    let stored = state
+        .settings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if stored.openrouter_key.trim().is_empty() {
+        return Err("No OpenRouter API key configured.".into());
+    }
+    let tln = language_display(&stored.target_language);
+    let native = native_display(&stored.native_language);
+    let messages = vec![
+        json!({"role": "system", "content": prompts::word_insight_system_prompt(&tln, &native)}),
+        json!({"role": "user", "content": format!("WORD: {word}\n\nSENTENCE: {sentence}")}),
+    ];
+    let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
+    provider
+        .structured_validated::<WordInsight, _>(
+            &messages,
+            0.2,
+            "WordInsight",
+            false,
+            |w: &WordInsight| {
+                if w.lemma.trim().is_empty() || w.usage.trim().is_empty() {
+                    Some("lemma and usage must be filled".into())
+                } else {
+                    None
+                }
+            },
+        )
+        .await
 }
 
 // ─── Stories ─────────────────────────────────────────────────────────────────

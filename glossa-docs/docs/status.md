@@ -29,6 +29,8 @@ commit"; the whole app tree is untracked).
 | Async analysis (tokens/translation/mechanics/scaffolds) with per-section degradation | `commands.rs:353-508` |
 | **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split) | `commands.rs` coach pass, `coach.md`, Coach tab |
 | **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
+| **Learner interrogation** — your own messages get tokenized + translated; click/drag/dblclick/right-click/press-and-hold on learner AND tutor words | `LearnerTokensOut`, `TokenSpan`, `word_insight` command, `WordInsightModal` |
+| **Interactive coach thread** — persisted private side-chat with the coach; analysis Q&A input | `coach_ask`, `coach_thread.json`, Coach pane input |
 | Observer pass, non-overlapping, plan/profile persisted + learner-visible drawer | `commands.rs:262-351`, `observer.rs` |
 | Anti-repetition (taught ledger + 20-card ring) | `observer.rs::directives_block`, `commands.rs:483-496` |
 | Structured output fallback ladder | `ai.rs::structured_validated` |
@@ -112,6 +114,10 @@ the app loads no remote content).
 ### R14 · Assorted sharp edges — **partially fixed**
 - Story cache restore only looks up the `beginner` slot regardless of last
   used level (`StoriesPage.tsx`). — **open**
+- Stale scaffold chips when generation fails — **fixed**: steering changes
+  regenerate scaffolds via a dedicated `generate_scaffolds` command; failures
+  surface as a visible ⚠ in the suggestion header (best-available fallback
+  remains, now with visible cause).
 - `localStorage.glossa_target` can go stale vs. actual settings. — **open**
 - Settings modal requests mic permission as a side effect of opening. —
   **fixed**: mic enumeration happens only when the Audio & Voice section is
@@ -138,7 +144,7 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 |---|---|---|
 | B1 | Observer `observer_running` flag stuck `true` forever if the observer task panicked → observer silently disabled permanently. Fixed with a panic-safe RAII guard. | ✅ |
 | B2 | Tab switch (Guided↔Stories) unmounted GuidedPage and destroyed the conversation. Both pages now stay mounted; inactive page is `display:none`. | ✅ |
-| B3 | Android back button exits app instead of closing topmost overlay (popup/drawer/panel). Needs overlay-stack design. | ⬜ |
+| B3 | Android back button exits app instead of closing topmost overlay. | ✅ lib/back.ts history-entry stack — opening an overlay pushes state, back closes topmost; wired into word popup, plan drawer, logs panel, Settings |
 | M1 | iOS auto-zoom on focus: inputs < 16px font (`.field` 14px, Settings 13.5px). Fix: 16px inputs. | ✅ 16px on ≤860px viewports |
 | M2 | Logs fab (fixed bottom-left) overlaps the composer on mobile. Re-dock. | ✅ docked beside the topbar gear |
 | M3 | 🔊 button (absolute top-right of bubble) can overlap reply text. | ✅ `with-speak` reserves right padding |
@@ -152,11 +158,11 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 | S3 | Keys plaintext on disk → keychain/stronghold later. | ⬜ future |
 | H1 | Language lists duplicated (Rust, TS constants, ad-hoc display map in GuidedPage). Single source via IPC. | 🟡 display map now uses the shared TS list; full IPC sourcing deferred |
 | H2 | GuidedPage duplication: empty-assistant literal ×2, normalizeDocs call sites ×3 → helpers. | ✅ `emptyAssistant()` + `normalizeDocs` moved to `lib/normalize.ts` |
-| H3 | App.tsx dead `settings` value + `localStorage.glossa_target` second source of truth. | ⬜ |
+| H3 | App.tsx dead `settings` value + `localStorage.glossa_target` second source of truth. | ✅ dead state removed |
 | H4 | GuidedPage ~990 lines → split components (optional refactor). | ⬜ |
-| H5 | Hardcoded constants scattered: mic 10s auto-stop, Whisper model, Groq endpoint, webm mime. | ⬜ |
-| H6 | `schema_dump` debug bin builds in all profiles — gate or delete. | ⬜ |
-| H7 | `sanitize_reply` markers es/en-centric — fold into future-work ladder notes. | ⬜ |
+| H5 | Hardcoded constants scattered: mic 10s auto-stop, Whisper model, Groq endpoint, webm mime. | ✅ named constants (MIC_* in GuidedPage, GROQ_STT_*/TTS_* in commands.rs) |
+| H6 | `schema_dump` debug bin builds in all profiles — gate or delete. | ✅ moved to `examples/` |
+| H7 | `sanitize_reply` markers es/en-centric — fold into future-work ladder notes. | ✅ documented in Future Work dialect notes |
 | E1 | No unit tests for the pure functions that bit us: `inline_defs`, `normalizeDocs`, `token-spacing`, `groupSentences/splitSentences`. | ✅ 6 Rust tests (inline_defs regression, mask, migrate) + 12 vitest cases (`npm test`) |
 | E2 | No CI: clippy + tsc + docs build gate. | ✅ `.github/workflows/ci.yml` (clippy -D warnings, cargo test --lib, vitest + tsc + vite, docs build) |
 | D1 | status.md R-list drifted after the week's fixes — refresh at end of audit. | ✅ |

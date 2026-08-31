@@ -5,9 +5,12 @@ title: The Coach
 
 # The Coach — a second conversation on your shoulder
 
-Status: **bite 1 SHIPPED** — the coach pass runs per learner message and
-feedback renders in the default "Coach" tab of the breakdown panel;
-failures surface in-panel (fail loudly). Interactive coach thread comes later.
+Status: **bite 1 SHIPPED** (per-message auto-feedback, Coach tab) and
+**bite 3 SHIPPED** — the coach is now an interactive thread: ask it questions
+directly from the Coach pane; the thread persists to `coach_thread.json`
+(40-message cap, corrupt-file protection) and is **private forever** — the
+native-speaker agent never sees it (Cyrano principle). The Analysis pane has
+its own Q&A input (session-scoped, auto-context from the pinned turn).
 
 ## The Cyrano principle
 

@@ -67,7 +67,7 @@ async fn model_bench() {
         eprintln!("\n================ {} ================", model);
 
         // 1. Streaming greeting reply (TTFT + total).
-        let sys = prompts::guided_reply_prompt("es-ES", tln, "A2", native, 3, "");
+        let sys = prompts::guided_reply_prompt("es-ES", tln, "A2", native, "");
         let messages = vec![
             serde_json::json!({"role": "system", "content": sys}),
             serde_json::json!({"role": "user", "content": "[Session start] Greet the learner warmly and ask one simple opening question they can answer at their level."}),
@@ -120,7 +120,7 @@ async fn model_bench() {
 
         // 3. Scaffolds — the wrapper-shape failure case.
         let msgs = vec![
-            serde_json::json!({"role": "system", "content": prompts::guided_scaffolds_prompt(tln, native, 3, "")}),
+            serde_json::json!({"role": "system", "content": prompts::guided_scaffolds_prompt(tln, native, "")}),
             serde_json::json!({"role": "user", "content": format!("Learner message:\nHola\n\nTutor reply:\n{}", reply_text)}),
         ];
         let start = Instant::now();

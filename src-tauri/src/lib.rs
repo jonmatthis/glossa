@@ -17,6 +17,8 @@ pub struct AppState {
     pub profile: Mutex<observer::Profile>,
     pub recent_mechanics: Mutex<Vec<String>>,
     pub observer_running: Mutex<bool>,
+    /// The private coach thread (Cyrano side-channel) — persisted.
+    pub coach_thread: Mutex<Vec<commands::CoachChatMessage>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -61,6 +63,8 @@ pub fn run() {
                 plan.session_focus,
                 profile.about.len(),
             );
+            let coach_thread = commands::init_coach_thread(&config_dir);
+            log::info!("coach thread loaded: {} messages", coach_thread.len());
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 config_dir,
@@ -68,6 +72,7 @@ pub fn run() {
                 profile: Mutex::new(profile),
                 recent_mechanics: Mutex::new(Vec::new()),
                 observer_running: Mutex::new(false),
+                coach_thread: Mutex::new(coach_thread),
             });
             Ok(())
         })
@@ -77,6 +82,12 @@ pub fn run() {
             commands::validate_key,
             commands::get_diagnostics,
             commands::speak_text,
+            commands::generate_scaffolds,
+            commands::word_insight,
+            commands::get_coach_thread,
+            commands::coach_ask,
+            commands::coach_thread_clear,
+            commands::analysis_ask,
             commands::guided_turn,
             commands::generate_story,
             commands::transcribe_audio,
