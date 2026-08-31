@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import type { AnalyserNode } from '@tauri-apps/api/core'
 import { logDebug, logError, logInfo, logWarn } from '../lib/log'
 
 const MIC_SILENCE_STOP_MS = 20_000
@@ -8,7 +7,7 @@ const MIC_VOICE_THRESHOLD = 0.02
 
 interface MicRecorderOptions {
   micDeviceId: string | null | undefined
-  onTranscript: (text: string) => void
+  onTranscribe: (text: string) => void
 }
 
 interface MicRecorder {
@@ -143,7 +142,7 @@ export function useMicRecorder({ micDeviceId, onTranscribe }: MicRecorderOptions
     } catch (e) {
       setRecording(false)
       logError('[mic] failed to start recording:', e)
-ne    }
+    }
   }, [])
 
   return { recording, recAnalyser, toggleMic }

@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import type { GuidedTurnResult } from '../../types'
+import type { GuidedToken, GuidedTurnResult } from '../../types'
 import { needsSpaceBetween } from '../../lib/token-spacing'
 
 export interface InspectTarget {

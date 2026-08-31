@@ -182,7 +182,27 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 - Localization of the UI itself (English-only chrome)
 - Tests, benches, telemetry (none, by design for now)
 
-## Structural refactor plan (next phase)
+## Structural refactor (decomposition) — **PASS 1 SHIPPED**
+
+`GuidedPage` dropped from ~1,850 to ~1,100 lines; the extracted pieces:
+
+| Piece | Lines | Contents |
+|---|---|---|
+| `components/chat/TurnView.tsx` | ~290 | memoized turn renderer, TokenSpan (click/drag/hold/dblclick interrogation), sentence grouping |
+| `components/panes/CoachFeed.tsx` | ~100 | per-message coaching card + score meters |
+| `components/panes/AnalysisContent.tsx` | ~140 | pinned-turn breakdown + Q&A thread |
+| `hooks/useMicRecorder.ts` | ~140 | full mic lifecycle: permissions, capture, silence auto-stop, analyser, Whisper |
+| `hooks/useSteering.ts` | ~65 | level/topic steering, persistent toggles, greeting guard |
+
+**Next pass (same pattern, when these files are next touched):**
+- GuidedPage remains ~1,100 lines — remaining extractable pieces: the plan
+  drawer (render + refresh), the shortcuts hook, and the scaffold
+  regeneration hook. Target: GuidedPage as pure state + layout.
+- The plan-drawer section renderers repeat a render-list pattern that
+  AnalysisContent now encapsulates — fold them on next touch.
+- Shortcut logic (`useShortcuts`) and scaffold regeneration (`useScaffolds`)
+  are the next two hooks to extract.
+
 
 File sizes have crossed the threshold where single-file sections hurt:
 
