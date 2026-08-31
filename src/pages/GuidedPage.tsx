@@ -445,6 +445,12 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     (LANGUAGES.find((l) => l.code === settings.target_language)?.romanization ??
       null) !== null
 
+  // RTL targets render token lines right-to-left.
+  const rtl =
+    settings != null &&
+    (LANGUAGES.find((l) => l.code === settings.target_language)?.direction ??
+      'ltr') === 'rtl'
+
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
     ? (LANGUAGES.find((l) => l.code === settings.target_language)?.name ??
@@ -719,6 +725,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
               ttsReady={ttsReady}
               revealed={revealed}
               showRomanization={showRomanization}
+              rtl={rtl}
               onReveal={onReveal}
               onBubbleTap={onBubbleTap}
               onSpeak={speakReply}
@@ -959,6 +966,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
                     inspect={inspect}
                     nativeLanguageName={nativeLanguageName}
                     showRomanization={showRomanization}
+                    rtl={rtl}
                     qaPairs={qaPairs}
                   />
                 ) : (

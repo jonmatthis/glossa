@@ -18,6 +18,7 @@ interface AnalysisContentProps {
   inspect: InspectTarget | null
   nativeLanguageName: string
   showRomanization: boolean
+  rtl: boolean
   qaPairs: { q: string; a: string }[]
 }
 
@@ -28,6 +29,7 @@ export const AnalysisContent = memo(function AnalysisContent({
   inspect,
   nativeLanguageName,
   showRomanization,
+  rtl,
   qaPairs,
 }: AnalysisContentProps) {
   const a = turn.assistant
@@ -56,7 +58,7 @@ export const AnalysisContent = memo(function AnalysisContent({
   )
 
   const tokenSentence = (tokens: GuidedToken[]) => (
-    <p className="sentence">
+    <p className={rtl ? 'sentence rtl' : 'sentence'}>
       {tokens.map((tok, i) => {
         const prev = i > 0 ? tokens[i - 1].text : ''
         return (
@@ -98,7 +100,7 @@ export const AnalysisContent = memo(function AnalysisContent({
       {a.user_tokens && a.user_tokens.length > 0 ? (
         showRomanization ? tokenSentenceRomanized(a.user_tokens) : tokenSentence(a.user_tokens)
       ) : turn.user ? (
-        <p className="sentence">{turn.user}</p>
+        <p className={rtl ? 'sentence rtl' : 'sentence'}>{turn.user}</p>
       ) : null}
       {a.user_translation && <p className="trans-d">{a.user_translation}</p>}
 

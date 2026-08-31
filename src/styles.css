@@ -186,6 +186,15 @@ body {
 .roman-inline { font-size: 11px; color: var(--steel); font-family: var(--mono); font-style: normal; }
 .sentence.rtl { direction: rtl; font-size: 21px; }
 .proman { font-size: 10px; color: var(--steel); font-family: var(--mono); font-style: normal; }
+/* Flex layout overrides the Unicode bidi algorithm: for RTL targets the
+   token line must run row-reverse so the first word (DOM order) appears
+   rightmost. */
+.line.rtl-line { flex-direction: row-reverse; }
+.line.rtl-line .wu { direction: rtl; }
+.msg.me.rtl { align-self: flex-end; }
+.msg.bot.rtl .line { flex-direction: row-reverse; }
+.msg.bot.rtl .line .wu { direction: rtl; }
+.msg.bot.rtl { text-align: right; }
 .scaf {
   flex: none; font-family: var(--serif); font-size: 13.5px; color: var(--ink);
   background: #fff; border: 1px solid #b9b29c; border-radius: 18px;

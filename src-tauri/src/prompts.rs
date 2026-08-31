@@ -239,7 +239,7 @@ pub fn coach_system_prompt(target_language_name: &str, native_language_name: &st
           speaker would say, with the corrected form spelled out), a useful \
           phrase they could deploy in their next turn, or one grammar or \
           morphology observation citing their actual words. NEVER invent \
-          errors. Never just say "great job" or "good start" — that is a \
+          errors. Never just say \"great job\" or \"good start\" - that is a \
           dead-end with no usable content.\n\
           - used_target / used_native: verbatim fragments of their message in \
           each language (may be empty).\n\

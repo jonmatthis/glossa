@@ -134,6 +134,7 @@ export interface TurnViewProps {
   ttsReady: boolean
   revealed: Set<string>
   showRomanization: boolean
+  rtl: boolean
   onReveal: (keys: string[]) => void
   onBubbleTap: (id: number) => void
   onSpeak: (text: string) => void
@@ -151,6 +152,7 @@ export const TurnView = memo(function TurnView({
   ttsReady,
   revealed,
   showRomanization,
+  rtl,
   onReveal,
   onBubbleTap,
   onSpeak,
@@ -221,7 +223,7 @@ export const TurnView = memo(function TurnView({
     translation: string | null,
     rawText: string
   ) => (
-    <span className="line">
+    <span className={rtl ? 'line rtl-line' : 'line'}>
       {entries.map(({ tok, si }, gi) => {
         const key = `${turnId}:${gi}`
         const isRevealed = revealed.has(key)
@@ -253,7 +255,7 @@ export const TurnView = memo(function TurnView({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {turn.user && (
         <div
-          className={`msg me${userEntries.length ? '' : ' plain'}`}
+          className={`msg me${userEntries.length ? '' : ' plain'}${rtl ? ' rtl' : ''}`}
           onDoubleClick={() =>
             assistant && onToggleReveal(assistant.user_tokens.map((_, i) => `${turn.id}:${i}`))
           }
@@ -274,7 +276,7 @@ export const TurnView = memo(function TurnView({
           onKeyDown={(e) => {
             if (e.key === 'Enter') bubbleTap()
           }}
-          className={`msg bot ${focused ? 'focused' : ''}${ttsReady ? ' with-speak' : ''}`}
+          className={`msg bot ${focused ? 'focused' : ''}${ttsReady ? ' with-speak' : ''}${rtl ? ' rtl' : ''}`}
         >
           {assistant.tokens.length > 0 ? (
             renderTokens(

@@ -1424,7 +1424,7 @@ pub async fn generate_scaffolds(
     }
     let tln = language_display(&stored.target_language);
     let native = native_display(&stored.native_language);
-    let cefr = match req.level.as_deref() {
+    let _cefr = match req.level.as_deref() {
         Some("intermediate") => "B1",
         Some("advanced") => "C1",
         _ => "A2",
