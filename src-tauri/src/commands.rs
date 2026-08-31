@@ -662,7 +662,8 @@ pub async fn guided_turn(
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         format!(
-            "{}{}",
+            "{}{}{}",
+            target_overlay,
             observer::directives_block(&plan, &recent),
             topic_directive
         )

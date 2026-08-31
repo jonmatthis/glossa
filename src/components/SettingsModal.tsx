@@ -10,6 +10,7 @@ import {
   LANGUAGES,
 } from '../lib/tauri'
 import { comboFromEvent, SHORTCUT_DEFAULTS, type ShortcutAction } from '../lib/keyboard'
+import { DialectField } from './DialectField'
 import { t, tOr, uiLangFromNative, type UiLang } from '../lib/i18n'
 
 type KeyCheck = { state: 'idle' | 'checking' | 'valid' | 'invalid'; detail: string }
@@ -372,11 +373,13 @@ export function SettingsModal({
       kw: 'dialect regional variety accent region levantine mexican',
       node: (
         <div className="form-row">
-          <label>Regional variety (free text — passed to the AI)</label>
-          <input
+          <label>Regional variety</label>
+          <DialectField
+            presets={
+              LANGUAGES.find((l) => l.code === settings.target_language)?.dialects ?? []
+            }
             value={settings.target_dialect}
-            placeholder="e.g. Levantine, Mexican, Québécois…"
-            onChange={(e) => setSettings({ ...settings, target_dialect: e.target.value })}
+            onChange={(v) => setSettings({ ...settings, target_dialect: v })}
           />
         </div>
       ),
@@ -499,6 +502,23 @@ export function SettingsModal({
               onChange={(e) => setSettings({ ...settings, auto_send: e.target.checked })}
             />
             <span>Auto-send transcriptions (mic → send immediately)</span>
+          </label>
+        </div>
+      ),
+    },
+    always_romanize: {
+      section: 'voice',
+      label: L('always_romanize', 'Always show romanization'),
+      kw: 'romanization always show latin arabic pinyin pronunciation',
+      node: (
+        <div className="form-row check-row">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.always_romanize}
+              onChange={(e) => setSettings({ ...settings, always_romanize: e.target.checked })}
+            />
+            <span>Always show romanization (non-Latin targets like Arabic)</span>
           </label>
         </div>
       ),

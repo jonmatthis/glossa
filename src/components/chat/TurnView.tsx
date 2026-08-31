@@ -1,6 +1,8 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useMemo, useRef, useState } from 'react'
 import type { GuidedToken, GuidedTurnResult } from '../../types'
 import { popupAnchor, type PopupState } from '../GlossPopup'
+import { groupSentences, splitSentences } from '../../lib/sentences'
+import { needsSpaceBetween } from '../../lib/token-spacing'
 
 export interface TurnShape {
   id: number
@@ -20,24 +22,6 @@ function tokenEntries(tokens: GuidedToken[]): TokenEntry[] {
   return groupSentences(tokens).flatMap((sentence, si) =>
     sentence.map((tok) => ({ tok, si }))
   )
-}
-
-// Tokens carry their trailing punctuation ("hoy?"), so a token ending in
-// terminal punctuation closes its sentence.
-const TERMINAL_PUNCT = /[.!?…]/
-
-function splitSentences(text: string): string[] {
-  return (text.match(/[^.!?…]+[.!?…]*/g) ?? []).map((s) => s.trim()).filter(Boolean)
-}
-
-function groupSentences(tokens: GuidedToken[]): GuidedToken[][] {
-  const sentences: GuidedToken[][] = [[]]
-  for (const tok of tokens) {
-    sentences[sentences.length - 1].push(tok)
-    if (TERMINAL_PUNCT.test(tok.text)) sentences.push([])
-  }
-  if (sentences[sentences.length - 1].length === 0) sentences.pop()
-  return sentences
 }
 
 interface TokenSpanProps {
@@ -132,6 +116,7 @@ export interface TurnViewProps {
   turn: TurnShape
   focused: boolean
   ttsReady: boolean
+  speaking: boolean
   revealed: Set<string>
   showRomanization: boolean
   rtl: boolean
@@ -150,6 +135,7 @@ export const TurnView = memo(function TurnView({
   turn,
   focused,
   ttsReady,
+  speaking,
   revealed,
   showRomanization,
   rtl,
@@ -204,7 +190,9 @@ export const TurnView = memo(function TurnView({
     if (dragRef.current.moved) return // drag ended on this span — no popup
     const pos = popupAnchor(e.currentTarget)
     const show = (text: string) =>
-      onPopup((prev) => (prev && prev.text === text ? null : { text, ...pos }))
+      onPopup((prev) =>
+        prev && prev.text === text ? null : { text, romanization: tok.romanization, ...pos }
+      )
     if (tok.gloss) {
       show(tok.gloss)
       return
@@ -227,7 +215,11 @@ export const TurnView = memo(function TurnView({
       {entries.map(({ tok, si }, gi) => {
         const key = `${turnId}:${gi}`
         const isRevealed = revealed.has(key)
+        const prev = gi > 0 ? entries[gi - 1].tok.text : ''
+        const space = gi > 0 && needsSpaceBetween(prev, tok.text) ? ' ' : ''
         return (
+          <Fragment key={`${side}-${gi}`}>
+            {space}
           <TokenSpan
             key={`${side}-${gi}`}
             tok={tok}
@@ -246,6 +238,7 @@ export const TurnView = memo(function TurnView({
               onHold(tok.text, sents[si] ?? rawText)
             }}
           />
+          </Fragment>
         )
       })}
     </span>
@@ -293,14 +286,14 @@ export const TurnView = memo(function TurnView({
             <button
               type="button"
               className="speak-btn"
-              title="Speak reply"
-              aria-label="Speak reply"
+              title={speaking ? 'Stop playback' : 'Speak reply'}
+              aria-label={speaking ? 'Stop playback' : 'Speak reply'}
               onClick={(e) => {
                 e.stopPropagation()
                 onSpeak(assistant.reply)
               }}
             >
-              🔊
+              {speaking ? '⏹' : '🔊'}
             </button>
           )}
         </div>

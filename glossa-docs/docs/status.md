@@ -27,7 +27,7 @@ commit"; the whole app tree is untracked).
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
-| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar-LE (Levantine), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language | `languages.rs`, `commands.rs::save_settings`, `GuidedPage` pair-change effect |
+| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar (any dialect), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language; **dialect = preset dropdown + free-text combobox** injected into every prompt | `languages.rs`, `commands.rs::save_settings`, `components/DialectField.tsx`, `GuidedPage` pair-change effect |
 | **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP), unvocalized typing convention; Whisper gets a target-language-only context hint (recent turns) because hint language leaks into transcripts; RTL token rendering via `row-reverse` lines (flex order overrides bidi) | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.rtl-line`/`.wroman` UI |
 | **Unified right panel** — Coach / Analysis tabs (one pane, both views); coach thread persists inside the Coach tab; analysis Q&A chat removed | `components/panes/CoachAnalysisPanel.tsx` |
 | **Mobile mode = window mode** — window below 860px switches to tabbed single-surface layout (bottom nav: Chat ⇄ Coach/Analysis); desktop shrinks into it for testing | `GuidedPage` matchMedia effect, `.mobile-nav` |
@@ -123,6 +123,12 @@ the app loads no remote content).
   panes) — makes desktop mobile-mode testing trivial.
 - Analysis Q&A chat **removed** — the app has exactly two chats: the partner
   conversation and the coach thread. Analysis is a read-only breakdown pane.
+- **Voice QA pass**: recording has an explicit ✕ cancel (discard, no
+  transcription); any 🔊 click toggles playback with a ⏹ stop affordance
+  (global speaking-state ring); speaker button restyled for contrast; the
+  button now renders on mobile too (it was hidden by the mobile surface
+  toggle); **"Always show romanization"** setting + romanization in the
+  gloss popup alongside the translation.
 - Steering changes (level/topic) now trigger a partner message: the partner
   acknowledges the new setting and re-opens the conversation with a fitting
   question. Rust `guided_turn(steering)` + frontend effect.
@@ -196,6 +202,25 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 - Tests, benches, telemetry (none, by design for now)
 
 ## Structural refactor (decomposition) — **PASS 1 SHIPPED**
+
+*(see the table below — file sizes and next-pass targets)*
+
+## Audit 2026-08-31 — AI hydration/trigger integrity pass (done)
+
+Findings from the prompt/trigger audit and their resolutions:
+
+| Finding | Fix |
+|---|---|
+| Dialect overlay never reached the main conversation (only scaffolds/stories) | `guided_turn` directives now chain `dialect → plan → topic` |
+| `groupSentences`/`splitSentences` duplicated inside TurnView after extraction (drifted from lib version) | import from `lib/sentences` restored; single copy + unit tests apply |
+| Word-spacing (`needsSpaceBetween`) logic lost in TurnView extraction — chat tokens rendered without proper spacing | restored via Fragment-based spacing in `renderTokens` |
+| Coach thread state split across GuidedPage and panel → reload races | thread state now lives solely in `CoachAnalysisPanel`; GuidedPage bumps a `threadReload` counter after `coach_thread_clear` |
+| Playback stop state could go stale (cloud TTS) | `audio.onpause` also clears the speaking state |
+
+Remaining squishiness watch-list (verify on next use, not pre-emptively coded):
+- greeting vs language-change effect ordering (both fire `requestTurn({greeting})`)
+- steering debounce (300ms) may double-fire if level+topic change in the same tick
+
 
 `GuidedPage` dropped from ~1,850 to ~1,100 lines; the extracted pieces:
 

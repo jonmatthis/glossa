@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 
 export interface PopupState {
   text: string
+  /// Romanized form of the word, when the target uses a non-Latin script.
+  romanization?: string | null
   x: number
   y: number
 }
@@ -29,7 +31,12 @@ export function GlossPopup({ popup, onClose }: { popup: PopupState; onClose: () 
   return (
     <div data-gloss-popup="1" className="popup" style={{ left: popup.x, top: popup.y }}>
       <div className="popup-card">
-        <span>{popup.text}</span>
+        <span>
+          {popup.text}
+          {popup.romanization && (
+            <span className="popup-roman"> · {popup.romanization}</span>
+          )}
+        </span>
         <button type="button" className="popup-x" onClick={onClose} aria-label="Close">
           ✕
         </button>

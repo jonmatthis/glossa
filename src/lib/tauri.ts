@@ -75,13 +75,14 @@ export const LANGUAGES: {
     dialects: [
       { id: 'es-ES', label: 'España (peninsular)' },
       { id: 'es-MX', label: 'Mexicano' },
+      { id: 'es-CO', label: 'Centroamericano' },
       { id: 'es-AR', label: 'Rioplatense' },
     ],
   },
   {
-    code: 'ar-LE',
+    code: 'ar',
     base: 'ar',
-    name: 'العربية (Levantine)',
+    name: 'Arabic',
     direction: 'rtl',
     romanization: 'ALA-LC',
     dialects: [

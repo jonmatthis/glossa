@@ -11,7 +11,14 @@ import type {
 import { GlossPopup, type PopupState } from '../components/GlossPopup'
 import { getPlan, getSettings, isTauri, LANGUAGES } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
-import { loadVoices, speakSmart, speechSupported, stopSpeaking } from '../lib/speech'
+import {
+  isSpeaking,
+  loadVoices,
+  speakSmart,
+  speechSupported,
+  stopSpeaking,
+  subscribeSpeaking,
+} from '../lib/speech'
 import { comboFromEvent } from '../lib/keyboard'
 import { normalizeDocs } from '../lib/normalize'
 import { WaveformStrip } from '../components/WaveformStrip'
@@ -108,8 +115,20 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     null
   )
 
+  // Panel reload counter: bumped when the coach thread is reset externally.
+  const [threadReload, setThreadReload] = useState(0)
+
+  // Speaking state drives the 🔊/⏹ affordance on every bubble.
+  const [speaking, setSpeaking] = useState(false)
+  useEffect(() => subscribeSpeaking(setSpeaking), [])
+
   const speakReply = useCallback(
     (text: string) => {
+      // Toggle: if audio is playing, this click stops it.
+      if (isSpeaking()) {
+        stopSpeaking()
+        return
+      }
       const lang = settings?.target_language ?? 'es-ES'
       const engine = settings?.tts_engine ?? 'cloud'
       const voice = settings?.tts_voice || 'nova'
@@ -146,6 +165,8 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       void invoke('coach_thread_clear').catch((e: unknown) =>
         logWarn('[coach] thread reset failed:', e)
       )
+      // Panel holds its own thread state; nudge it to reload the emptied thread.
+      setThreadReload((v) => v + 1)
       setRevealed(new Set())
       setFreshScaffolds(null)
     }
@@ -423,6 +444,9 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     (LANGUAGES.find((l) => l.code === settings.target_language)?.direction ??
       'ltr') === 'rtl'
 
+  // Romanization visibility: "always" setting OR a revealed token.
+  const alwaysRomanize = settings?.always_romanize ?? false
+
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
     ? (LANGUAGES.find((l) => l.code === settings.target_language)?.name ??
@@ -605,6 +629,26 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     () => typeof window !== 'undefined' && window.innerWidth <= 860
   )
   const [mobileSurface, setMobileSurface] = useState<'chat' | 'panel'>('chat')
+
+  // Horizontal swipe switches surfaces on mobile. Only claims gestures that
+  // are clearly horizontal (>|dx|, >2x|dy|, <600ms) so vertical chat
+  // scrolling and drag-to-reveal are untouched.
+  const swipe = useRef<{ x: number; y: number; t: number } | null>(null)
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t0 = e.touches[0]
+    swipe.current = { x: t0.clientX, y: t0.clientY, t: Date.now() }
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s = swipe.current
+    swipe.current = null
+    if (!s) return
+    const dx = e.changedTouches[0].clientX - s.x
+    const dy = e.changedTouches[0].clientY - s.y
+    if (Date.now() - s.t > 600) return
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return
+    if (dx < 0 && mobileSurface === 'chat') setMobileSurface('panel')
+    if (dx > 0 && mobileSurface === 'panel') setMobileSurface('chat')
+  }
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 860px)')
     const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
@@ -614,7 +658,11 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   }, [])
 
   return (
-    <div className="split">
+    <div
+      className="split"
+      onTouchStart={isMobile ? onTouchStart : undefined}
+      onTouchEnd={isMobile ? onTouchEnd : undefined}
+    >
       {/* ── Chat half (paper) ─────────────────────────────────────────── */}
       <section className={`chat ${isMobile && mobileSurface !== 'chat' ? 'mobile-hidden' : ''}`}>
         <div className="chat-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -640,8 +688,9 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
               turn={turn}
               focused={(pinnedId ?? latestAssistantId) === turn.id}
               ttsReady={ttsReady}
+              speaking={speaking}
               revealed={revealed}
-              showRomanization={showRomanization}
+              showRomanization={showRomanization || alwaysRomanize}
               rtl={rtl}
               onReveal={onReveal}
               onBubbleTap={onBubbleTap}
@@ -754,6 +803,17 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
             >
               ●
             </button>
+            {mic.recording && (
+              <button
+                type="button"
+                className="mic-cancel"
+                onClick={mic.cancel}
+                title="Cancel recording (discard)"
+                aria-label="Cancel recording"
+              >
+                ✕
+              </button>
+            )}
             <button
               type="submit"
               className="send"
@@ -797,7 +857,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           nativeLanguageName={nativeLanguageName}
           showRomanization={showRomanization}
           rtl={rtl}
-          settingsVersion={settingsVersion}
+          threadReload={threadReload}
           buildCoachContext={buildCoachContext}
         />
       </section>

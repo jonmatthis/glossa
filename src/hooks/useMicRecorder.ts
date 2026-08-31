@@ -16,6 +16,7 @@ interface MicRecorder {
   recording: boolean
   recAnalyser: AnalyserNode | null
   toggleMic: () => void
+  cancel: () => void
 }
 
 /// Microphone recording lifecycle: permission, capture, silence auto-stop,
@@ -25,6 +26,7 @@ export function useMicRecorder({ micDeviceId, onTranscribe, buildPrompt }: MicRe
   const [recording, setRecording] = useState(false)
   const [recAnalyser, setRecAnalyser] = useState<AnalyserNode | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const abortRef = useRef(false)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const silencePollRef = useRef<number | null>(null)
   const onTranscribeRef = useRef(onTranscribe)
@@ -60,6 +62,20 @@ export function useMicRecorder({ micDeviceId, onTranscribe, buildPrompt }: MicRe
       }
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop())
+        if (abortRef.current) {
+          abortRef.current = false
+          recorderRef.current = null
+          setRecording(false)
+          setRecAnalyser(null)
+          if (silencePollRef.current !== null) {
+            window.clearInterval(silencePollRef.current)
+            silencePollRef.current = null
+          }
+          void audioCtxRef.current?.close()
+          audioCtxRef.current = null
+          logInfo('[mic] recording cancelled')
+          return
+        }
         recorderRef.current = null
         setRecording(false)
         setRecAnalyser(null)
@@ -150,5 +166,23 @@ export function useMicRecorder({ micDeviceId, onTranscribe, buildPrompt }: MicRe
     }
   }, [])
 
-  return { recording, recAnalyser, toggleMic }
+  // Abort without transcribing — teardown only, no side effects.
+  const cancel = useCallback(() => {
+    const rec = recorderRef.current
+    if (rec && rec.state !== 'inactive') {
+      // onstop runs, but we clear the chunks via a flag so nothing is sent.
+      abortRef.current = true
+      rec.stop()
+    }
+    if (silencePollRef.current !== null) {
+      window.clearInterval(silencePollRef.current)
+      silencePollRef.current = null
+    }
+    void audioCtxRef.current?.close()
+    audioCtxRef.current = null
+    setRecAnalyser(null)
+    setRecording(false)
+  }, [])
+
+  return { recording, recAnalyser, toggleMic, cancel }
 }

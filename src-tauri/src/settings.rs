@@ -63,6 +63,10 @@ pub struct Settings {
     /// Send the speech transcription immediately instead of filling the composer.
     #[serde(default)]
     pub auto_send: bool,
+    /// Always show romanization under non-Latin tokens (in addition to
+    /// press-and-hold/tap insight). Default: only when revealed.
+    #[serde(default)]
+    pub always_romanize: bool,
     /// Configurable keyboard shortcuts.
     #[serde(default)]
     pub shortcuts: Shortcuts,
@@ -102,6 +106,13 @@ const LEGACY_DEFAULT_MODELS: &[&str] = &[
 ];
 
 fn migrate(settings: &mut Settings) {
+    // Arabic entry restructured: code ar-LE became code ar + dialect preset.
+    if settings.target_language == "ar-LE" {
+        settings.target_language = "ar".into();
+        if settings.target_dialect.is_empty() {
+            settings.target_dialect = "ar-LE".into();
+        }
+    }
     if LEGACY_DEFAULT_MODELS.contains(&settings.openrouter_model.as_str()) {
         log::info!(
             "migrating worker model: {} -> {}",
@@ -143,6 +154,7 @@ impl Default for Settings {
             microphone_device_id: None,
             auto_speak: false,
             auto_send: false,
+            always_romanize: false,
             shortcuts: Shortcuts::default(),
             tts_engine: default_tts_engine(),
             tts_voice: default_tts_voice(),

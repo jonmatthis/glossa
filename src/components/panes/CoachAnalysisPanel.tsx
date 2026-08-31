@@ -30,7 +30,7 @@ export function CoachAnalysisPanel({
   nativeLanguageName,
   showRomanization,
   rtl,
-  settingsVersion,
+  threadReload,
   buildCoachContext,
 }: {
   turns: CoachTurn[]
@@ -46,7 +46,7 @@ export function CoachAnalysisPanel({
   nativeLanguageName: string
   showRomanization: boolean
   rtl: boolean
-  settingsVersion: number
+  threadReload: number
   buildCoachContext: () => string
 }) {
   const [tab, setTab] = useState<'coach' | 'analysis'>('coach')
@@ -59,7 +59,7 @@ export function CoachAnalysisPanel({
     void invoke<{ role: string; content: string }[]>('get_coach_thread')
       .then(setThread)
       .catch((e: unknown) => logWarn('[coach] thread load failed:', e))
-  }, [settingsVersion])
+  }, [threadReload])
 
   const coachAsk = useCallback(
     async (question: string) => {

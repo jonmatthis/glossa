@@ -76,7 +76,7 @@ pub const LANGUAGES: &[Language] = &[
         overlay: "Language-specific guidance:\n- Use Peninsular Spanish from Spain consistently.\n- Prefer Spain usage, including vosotros for informal plural address when appropriate.\n- Avoid voseo and Latin American-only vocabulary unless explicitly comparing variants.\n- Pay close attention to accents, gender, number agreement, and natural Spain Spanish phrasing.{dialect}",
     },
     Language {
-        code: "ar-LE",
+        code: "ar",
         base: "ar",
         name: "Arabic",
         endonym: "العربية",
