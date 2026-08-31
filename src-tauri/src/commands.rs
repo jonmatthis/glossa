@@ -381,6 +381,45 @@ pub fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Resu
     );
     // A failed save means the user's keys are NOT on disk — fail loudly.
     settings::persist(&state.config_dir, &settings)?;
+    // Language pair changed → the observer documents and coach thread were
+    // built for the OTHER pairing. Archive them (never silently mix
+    // languages) and start fresh for the new pairing. Archived files keep
+    // every old document recoverable.
+    let pairing_changed = stored.target_language != settings.target_language
+        || stored.native_language != settings.native_language;
+    if pairing_changed {
+        let archive = |name: &str| {
+            let src = state.config_dir.join(name);
+            if src.exists() {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|t| t.as_secs())
+                    .unwrap_or(0);
+                let dst = state.config_dir.join(format!(
+                    "{name}.{old_target}.{stamp}.bak",
+                    old_target = stored.target_language
+                ));
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    warn!("[cmd] could not archive {name}: {e}");
+                } else {
+                    info!("[cmd] language change: archived {name} -> {}", dst.display());
+                }
+            }
+        };
+        archive("plan.json");
+        archive("profile.json");
+        archive("coach_thread.json");
+        // Reset in-memory documents so the next turn starts clean.
+        *state.plan.lock().unwrap_or_else(|p| p.into_inner()) =
+            observer::TeachingPlan::default();
+        *state.profile.lock().unwrap_or_else(|p| p.into_inner()) =
+            observer::Profile::default();
+        state
+            .coach_thread
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+    }
     *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
     Ok(())
 }

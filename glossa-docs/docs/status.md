@@ -26,8 +26,9 @@ commit"; the whole app tree is untracked).
 | Capability | Evidence |
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
-| Async analysis (tokens/translation/mechanics/scaffolds) with per-section degradation | `commands.rs:353-508` |
-| **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split) | `commands.rs` coach pass, `coach.md`, Coach tab |
+| Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
+| **Language pair switching** — es-ES ⇄ fr-FR, any native language; documents archived on switch; full conversation reset + fresh greeting in the new language | `languages.rs`, `commands.rs::save_settings`, `GuidedPage` pair-change effect |
+| **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split), **interactive persisted coach thread**, analysis Q&A | `commands.rs` coach pass + `coach_ask`/`get_coach_thread`, `coach.md`, Coach pane |
 | **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
 | **Learner interrogation** — your own messages get tokenized + translated; click/drag/dblclick/right-click/press-and-hold on learner AND tutor words | `LearnerTokensOut`, `TokenSpan`, `word_insight` command, `WordInsightModal` |
 | **Interactive coach thread** — persisted private side-chat with the coach; analysis Q&A input | `coach_ask`, `coach_thread.json`, Coach pane input |
@@ -68,12 +69,13 @@ Keys no longer travel to the webview at all: `get_settings` returns masked
 values (`••••last4`), `save_settings` treats an unchanged mask as
 "keep stored key", and `validate_key` resolves masks server-side.
 
-### R6 · One language per install, documents not namespaced
-`plan.json` / `profile.json` / story caches are not keyed by target
-language. Switch from Spanish to Japanese mid-life leaves the observer
-rewriting Japanese-language plan data from Spanish habits, and story caches
-mix. Namespace by target language (or multi-profile) before making
-language-switching a first-class flow.
+### R6 · One language per install, documents not namespaced — **FIXED (archive + reset on switch)**
+On a target/native language change, `save_settings` archives
+`plan.json`, `profile.json`, and `coach_thread.json` with a timestamp and
+resets the in-memory documents; the GuidedPage detects the pair change and
+resets the conversation (turns, reveals, Q&A, coach thread) and fires a
+fresh greeting in the new language. Archived files keep every old document
+recoverable. Full multi-profile (instant switch-back) remains future work.
 
 ### R7 · Observer cadence & counters — **partially fixed**
 - `learner_turns` dead counter: **removed**.

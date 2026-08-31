@@ -35,19 +35,15 @@ export async function invoke<T>(
 }
 
 export const TARGET_LANGUAGES: [string, string][] = [
+  ['en-US', 'English (US)'],
+  ['fr-FR', 'French'],
   ['es-ES', 'Spanish (Spain)'],
 ]
 
 export const NATIVE_LANGUAGES: [string, string][] = [
   ['en', 'English'],
-  ['es', 'Spanish'],
   ['fr', 'French'],
-  ['it', 'Italian'],
-  ['pt', 'Portuguese'],
-  ['de', 'German'],
-  ['ja', 'Japanese'],
-  ['ko', 'Korean'],
-  ['zh', 'Chinese'],
+  ['es', 'Spanish'],
 ]
 
 export function getSettings(): Promise<Settings> {

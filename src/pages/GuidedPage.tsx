@@ -11,7 +11,7 @@ import type {
   TeachingPlan,
 } from '../types'
 import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPopup'
-import { getPlan, getSettings, isTauri, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
+import { getPlan, getSettings, isTauri, NATIVE_LANGUAGES, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
 import { loadVoices, speakSmart, speechSupported, stopSpeaking } from '../lib/speech'
 import { comboFromEvent } from '../lib/keyboard'
@@ -373,7 +373,15 @@ const TurnView = memo(function TurnView({
 
 /// Sidebar tutor: latest learner message's coaching. Per-message
 /// auto-feedback; the interactive coach thread is a planned bite.
-function CoachFeed({ turns }: { turns: Turn[] }) {
+function CoachFeed({
+  turns,
+  targetLangCode,
+  nativeLangCode,
+}: {
+  turns: Turn[]
+  targetLangCode: string
+  nativeLangCode: string
+}) {
   const latest = [...turns]
     .reverse()
     .find((t) => t.user !== null && (t.coach || t.coachError))
@@ -382,7 +390,7 @@ function CoachFeed({ turns }: { turns: Turn[] }) {
     return (
       <div className="break-scroll coach-feed">
         <p className="center-note">
-          Say something in Spanish — your coach will weigh in here.
+          Say something — your coach will weigh in here.
         </p>
       </div>
     )
@@ -414,13 +422,13 @@ function CoachFeed({ turns }: { turns: Turn[] }) {
           <div className="coach-split">
             {c.used_target.length > 0 && (
               <div className="split-row">
-                <span className="split-k target">ES</span>
+                <span className="split-k target">{targetLangCode.toUpperCase()}</span>
                 <span>{c.used_target.join(' · ')}</span>
               </div>
             )}
             {c.used_native.length > 0 && (
               <div className="split-row">
-                <span className="split-k native">EN</span>
+                <span className="split-k native">{nativeLangCode.toUpperCase()}</span>
                 <span>{c.used_native.join(' · ')}</span>
               </div>
             )}
@@ -804,6 +812,34 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     [autoSpeak, onBubbleTap, speakReply, steerLevel, steerTopic]
   )
 
+  // Language pair changed → full conversation reset aligned to the new
+  // pairing: turns, reveals, scaffolds, Q&A, and the coach thread are all
+  // pair-specific (Rust archives the old documents on save; the greeting
+  // fires fresh in the new language).
+  const langPair = settings ? `${settings.target_language}|${settings.native_language}` : null
+  const prevLangPair = useRef<string | null>(null)
+  useEffect(() => {
+    if (!langPair) return
+    const prev = prevLangPair.current
+    prevLangPair.current = langPair
+    if (prev === null || prev === langPair) return
+    logInfo('[guided] language pair changed:', prev, '->', langPair, '— resetting conversation')
+    setTurns([])
+    setPinnedId(null)
+    setRevealed(new Set())
+    setFreshScaffolds(null)
+    setQaPairs([])
+    setCoachThread([])
+    setInspect(null)
+    setWordPopup(null)
+    setError(null)
+    setSending(false)
+    stopSpeaking()
+    sessionGreeted = false
+    void requestTurn({ greeting: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [langPair])
+
 
   useEffect(() => {
     const el = streamRef.current
@@ -982,6 +1018,10 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   const targetLanguageName = settings
     ? (TARGET_LANGUAGES.find(([c]) => c === settings.target_language)?.[1] ??
        settings.target_language.split('-')[0].toUpperCase())
+    : ''
+  const nativeLanguageName = settings
+    ? (NATIVE_LANGUAGES.find(([c]) => c === settings.native_language)?.[1] ??
+       settings.native_language.toUpperCase())
     : ''
 
   const latestScaffolds: Scaffolds | undefined = [...turns]
@@ -1383,7 +1423,11 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           </div>
           {!coachCollapsed && (
             <>
-              <CoachFeed turns={turns} />
+              <CoachFeed
+                turns={turns}
+                targetLangCode={(settings?.target_language ?? 'es-ES').split('-')[0].toUpperCase()}
+                nativeLangCode={(settings?.native_language ?? 'en').toUpperCase()}
+              />
               <div className="coach-thread">
                 {coachThread.map((m, i) => (
                   <div key={i} className={`coach-msg ${m.role}`}>
@@ -1570,7 +1614,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
                             {mech.example && <p className="exp-ex">{mech.example}</p>}
                             {mech.contrast && (
                               <p className="exp-vs">
-                                <span>vs English</span>
+                                <span>vs {nativeLanguageName || 'your language'}</span>
                                 {mech.contrast}
                               </p>
                             )}

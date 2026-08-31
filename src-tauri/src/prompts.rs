@@ -124,7 +124,7 @@ pub fn guided_mechanics_prompt(
            works, in {native}\n\
          - example: one worked example close to the reply, with a {native} gloss\n\
            after an em dash\n\
-         - contrast: one sentence on how it differs from English, in {native}\n\
+         - contrast: one sentence on how this differs from {contrast_with}, in {native}\n\
          FOCUS BIAS: if a structure from the session focus list appears in the\n\
          reply, that mechanic is your first card. Every reply teaches something\n\
          — never return zero cards. Never repeat a mechanic from the ALREADY\n\
@@ -134,8 +134,15 @@ pub fn guided_mechanics_prompt(
         tln = target_language_name,
         cefr = cefr_level,
         native = native_language_name,
+        contrast_with = contrast_language(native_language_name),
         directives = directives,
     )
+}
+
+/// The language the contrast note compares against: the learner's native
+/// language (e.g. a Spanish speaker learning French gets Spanish contrasts).
+pub fn contrast_language(native_language_name: &str) -> String {
+    native_language_name.to_string()
 }
 
 pub fn guided_scaffolds_prompt(
