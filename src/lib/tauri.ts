@@ -37,10 +37,25 @@ export async function invoke<T>(
 /// Single language registry — every entry works as BOTH target and native.
 /// `code` is the BCP-47 value stored for target_language; `base` is the
 /// value stored for native_language (and the UI language, lib/i18n.ts).
-export const LANGUAGES: { code: string; base: string; name: string }[] = [
-  { code: 'en-US', base: 'en', name: 'English (US)' },
-  { code: 'fr-FR', base: 'fr', name: 'Français' },
-  { code: 'es-ES', base: 'es', name: 'Español' },
+/// `direction` and `romanization` follow the target script (RTL + ALA-LC
+/// for Arabic; None for Latin scripts).
+export const LANGUAGES: {
+  code: string
+  base: string
+  name: string
+  direction: 'ltr' | 'rtl'
+  romanization: string | null
+}[] = [
+  { code: 'en-US', base: 'en', name: 'English (US)', direction: 'ltr', romanization: null },
+  { code: 'fr-FR', base: 'fr', name: 'Français', direction: 'ltr', romanization: null },
+  { code: 'es-ES', base: 'es', name: 'Español', direction: 'ltr', romanization: null },
+  {
+    code: 'ar-LE',
+    base: 'ar',
+    name: 'العربية (Levantine)',
+    direction: 'rtl',
+    romanization: 'ALA-LC',
+  },
 ]
 
 export function getSettings(): Promise<Settings> {
@@ -71,8 +86,11 @@ export function generateStory(level: Level): Promise<Story> {
   return invoke('generate_story', { level })
 }
 
-export function transcribeAudio(audioBase64: string): Promise<string> {
-  return invoke('transcribe_audio', { audioBase64 })
+export function transcribeAudio(
+  audioBase64: string,
+  prompt?: string
+): Promise<string> {
+  return invoke('transcribe_audio', { audioBase64, prompt: prompt ?? null })
 }
 
 export function getPlan(): Promise<ObserverDocuments> {

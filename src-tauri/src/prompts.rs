@@ -62,6 +62,7 @@ pub fn guided_reply_prompt(
          - LENGTH: One to three short sentences.\n\
          - SHELTERING: Use mostly high-frequency vocabulary the student already likely knows, plus at most one or two new words per reply (comprehensible input, i+1). Introduce new grammar gently and recycle earlier structures.\n\
          - RECASTS: If the student's message contains a small mistake, model the correct form naturally in your reply (recast). Never explicitly say \"that was wrong\".\n\
+         - CONTINUITY: Every reply must give the learner something to respond to — a question, a choice, an opinion to agree or disagree with, or a detail they can react to. Never close the conversation with a bare statement of fact or a one-word answer. If you acknowledge what they said, add one new element (a related detail, a follow-up, a gentle challenge) that invites their next turn. Dead-end replies (\"Sí.\", \"De acuerdo.\") are forbidden unless the learner explicitly asked for yes/no confirmation.\n\
          {emoji}\n\
          {overlay}\n\n\
          {directives}\n\n\
@@ -87,6 +88,9 @@ pub fn guided_tokens_prompt(
          gloss in context. Punctuation-only tokens get a null gloss. Tag each\n\
          token with a Universal part of speech (NOUN, VERB, ADJ, ADV, PRON, DET,\n\
          ADP, CCONJ, SCONJ, AUX, PART, INTJ, NUM, PROPN, PUNCT). Mark at most 3\n\
+         tokens as notable. Copy each token's text EXACTLY from the reply and\n\
+         never skip words. If the reply is in Arabic script, ALSO give each\n\
+         token a romanization in ALA-LC in its `romanization` field.\n\
          tokens as notable — forms a learner should notice (inflections,\n\
          constructions, word order). Copy each token's text EXACTLY from the\n\
          reply and never skip words.\n\
@@ -228,12 +232,17 @@ pub fn coach_system_prompt(target_language_name: &str, native_language_name: &st
          Their messages may mix {tln} and {native} - handle it naturally: \
          correct the {tln} parts, and if they ask how to say something in \
          {tln} (even mid-sentence, even in {native}), answer it.\n\n\
-         Analyze ONLY the learner's latest message, in conversation context.\n\n\
-         - remark: 1-3 warm sentences addressed to the learner. Mostly \
-         {native}, with {tln} phrases where instructive. React to what they \
-         attempted and answer any embedded question. Specific, never empty praise.\n\
-         - used_target / used_native: verbatim fragments of their message in \
-         each language (may be empty).\n\
+          Analyze ONLY the learner's latest message, in conversation context.\n\n\
+          - remark: 1-3 sentences addressed to the learner, in their natural \
+          mix of {native} and {tln}. ALWAYS include at least one CONCRETE \
+          contribution: a correction (what they said vs what a fluent \
+          speaker would say, with the corrected form spelled out), a useful \
+          phrase they could deploy in their next turn, or one grammar or \
+          morphology observation citing their actual words. NEVER invent \
+          errors. Never just say "great job" or "good start" — that is a \
+          dead-end with no usable content.\n\
+          - used_target / used_native: verbatim fragments of their message in \
+          each language (may be empty).\n\
          - corrections: 0-3, highest value first. said = verbatim fragment of \
          THEIR message; corrected = what a fluent speaker would say; \
          explanation in {native} (1-2 sentences). NEVER invent errors.\n\

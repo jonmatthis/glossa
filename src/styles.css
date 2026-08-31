@@ -180,6 +180,12 @@ body {
 }
 .scaffold-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
 .scaffold-chips::-webkit-scrollbar { display: none; }
+/* Romanization (non-Latin targets: ALA-LC for Arabic) */
+.wroman { font-size: 10px; color: var(--steel); line-height: 1.2; font-family: var(--mono); font-style: normal; }
+.w.holding { background: rgba(111, 155, 255, 0.15); }
+.roman-inline { font-size: 11px; color: var(--steel); font-family: var(--mono); font-style: normal; }
+.sentence.rtl { direction: rtl; font-size: 21px; }
+.proman { font-size: 10px; color: var(--steel); font-family: var(--mono); font-style: normal; }
 .scaf {
   flex: none; font-family: var(--serif); font-size: 13.5px; color: var(--ink);
   background: #fff; border: 1px solid #b9b29c; border-radius: 18px;

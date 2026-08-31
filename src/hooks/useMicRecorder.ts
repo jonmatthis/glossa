@@ -8,6 +8,8 @@ const MIC_VOICE_THRESHOLD = 0.02
 interface MicRecorderOptions {
   micDeviceId: string | null | undefined
   onTranscribe: (text: string) => void
+  /// Context hint passed to Whisper (live vocabulary, recent conversation).
+  buildPrompt: () => string
 }
 
 interface MicRecorder {
@@ -19,7 +21,7 @@ interface MicRecorder {
 /// Microphone recording lifecycle: permission, capture, silence auto-stop,
 /// live waveform analyser, and Whisper transcription. `onTranscript` fires
 /// with the transcript when a recording completes.
-export function useMicRecorder({ micDeviceId, onTranscribe }: MicRecorderOptions): MicRecorder {
+export function useMicRecorder({ micDeviceId, onTranscribe, buildPrompt }: MicRecorderOptions): MicRecorder {
   const [recording, setRecording] = useState(false)
   const [recAnalyser, setRecAnalyser] = useState<AnalyserNode | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -27,6 +29,8 @@ export function useMicRecorder({ micDeviceId, onTranscribe }: MicRecorderOptions
   const silencePollRef = useRef<number | null>(null)
   const onTranscribeRef = useRef(onTranscribe)
   onTranscribeRef.current = onTranscribe
+  const buildPromptRef = useRef(buildPrompt)
+  buildPromptRef.current = buildPrompt
   const micDeviceIdRef = useRef(micDeviceId)
   micDeviceIdRef.current = micDeviceId
 
@@ -93,6 +97,7 @@ export function useMicRecorder({ micDeviceId, onTranscribe }: MicRecorderOptions
         try {
           const text = await invoke<string>('transcribe_audio', {
             audioBase64: btoa(binary),
+            prompt: buildPromptRef.current(),
           })
           logInfo('[mic] transcribed:', text)
           if (text) onTranscribeRef.current(text)

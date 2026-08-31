@@ -5,10 +5,14 @@
 /// prompts take target/native names from this table, STT uses `base` for
 /// Whisper language codes, and overlays carry per-target guidance.
 ///
-/// Ladder (docs/future-work.md): a language only enters this registry once
+/// `romanization` carries the romanization scheme for non-Latin scripts
+/// (ALA-LC for Arabic); the AI returns a romanized form alongside the
+/// native script and the UI displays both. Latin-script languages use None.
+///
+/// Ladder (docs/future-work.md): a language only enters the registry once
 /// its interaction quirks are handled (space-delimited text, accented input,
-/// RTL, segmentation). Current rungs: en-US, fr-FR, es-ES. Next: Arabic
-/// (RTL), then Mandarin (segmentation).
+/// RTL, segmentation). Current rungs: en-US, fr-FR, es-ES, ar-Levantine.
+/// Next: Mandarin (segmentation + tones).
 pub struct Language {
     /// BCP-47 code — used as `target_language` in settings.
     pub code: &'static str,
@@ -18,6 +22,11 @@ pub struct Language {
     pub name: &'static str,
     /// The language's own name, as its speakers write it.
     pub endonym: &'static str,
+    /// Text direction for UI rendering.
+    pub direction: &'static str,
+    /// Romanization scheme for non-Latin scripts (ALA-LC, PINYIN, ...), or
+    /// None for Latin-script languages.
+    pub romanization: Option<&'static str>,
     /// Target-language guidance injected into every prompt when this
     /// language is the target.
     pub overlay: &'static str,
@@ -29,6 +38,8 @@ pub const LANGUAGES: &[Language] = &[
         base: "en",
         name: "English (US)",
         endonym: "English",
+        direction: "ltr",
+        romanization: None,
         overlay: "Language-specific guidance:\n- Use American English spelling, vocabulary, and idiom consistently (color, organize, elevator).\n- Pay close attention to word order, verb tenses, and preposition usage.\n- Avoid British-only vocabulary unless explicitly comparing variants.\n- Keep register natural: contractions (I'm, don't) are fine and expected in casual conversation.",
     },
     Language {
@@ -36,6 +47,8 @@ pub const LANGUAGES: &[Language] = &[
         base: "fr",
         name: "French",
         endonym: "Français",
+        direction: "ltr",
+        romanization: None,
         overlay: "Language-specific guidance:\n- Use standard French as spoken in France consistently.\n- Pay close attention to accents (é, è, ê, ç), elision (j'ai, l'ami), gender, and number agreement.\n- Use tu or vous consistently according to the context and learner level.\n- Avoid Canadian/Belgian/Swiss regionalisms unless explicitly comparing them.\n- Natural French phrasing: contractions (au, du, aux) and liaison where appropriate.",
     },
     Language {
@@ -43,7 +56,18 @@ pub const LANGUAGES: &[Language] = &[
         base: "es",
         name: "Spanish (Spain)",
         endonym: "Español",
+        direction: "ltr",
+        romanization: None,
         overlay: "Language-specific guidance:\n- Use Peninsular Spanish from Spain consistently.\n- Prefer Spain usage, including vosotros for informal plural address when appropriate.\n- Avoid voseo and Latin American-only vocabulary unless explicitly comparing variants.\n- Pay close attention to accents, gender, number agreement, and natural Spain Spanish phrasing.",
+    },
+    Language {
+        code: "ar-LE",
+        base: "ar",
+        name: "Arabic (Levantine)",
+        endonym: "العربية",
+        direction: "rtl",
+        romanization: Some("ALA-LC"),
+        overlay: "Language-specific guidance:\n- Use Levantine Arabic (Lebanon/Syria/Jordan/Palestine) as understood across the region.\n- Write in Arabic script with natural spelling; do not write in Latin characters.\n- Modern Standard Arabic vocabulary is acceptable when no Levantine equivalent exists, but keep grammar and phrasing Levantine.\n- Pay attention to root-and-pattern morphology: forms I-X change meaning systematically.\n- gender and number agreement are mandatory; the dual form exists alongside singular and plural.\n- Do not vocalize with full diacritics (tashkeel); write as natives type, unvocalized.",
     },
 ];
 

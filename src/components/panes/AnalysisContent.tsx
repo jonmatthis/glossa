@@ -17,6 +17,7 @@ interface AnalysisContentProps {
   }
   inspect: InspectTarget | null
   nativeLanguageName: string
+  showRomanization: boolean
   qaPairs: { q: string; a: string }[]
 }
 
@@ -26,6 +27,7 @@ export const AnalysisContent = memo(function AnalysisContent({
   turn,
   inspect,
   nativeLanguageName,
+  showRomanization,
   qaPairs,
 }: AnalysisContentProps) {
   const a = turn.assistant
@@ -41,6 +43,17 @@ export const AnalysisContent = memo(function AnalysisContent({
     inspect?.turn === turn.id && inspect?.side === side && inspect.index === i
       ? 'inspected'
       : ''
+
+  const tokenSentenceRomanized = (tokens: GuidedToken[]) => (
+    <p className="sentence rtl">
+      {tokens.map((tok, i) => (
+        <span key={i}>
+          <span className={tok.notable ? 'hl' : ''}>{tok.text}</span>
+          {tok.romanization && <span className="roman-inline"> {tok.romanization}</span>}
+        </span>
+      ))}
+    </p>
+  )
 
   const tokenSentence = (tokens: GuidedToken[]) => (
     <p className="sentence">
@@ -60,7 +73,10 @@ export const AnalysisContent = memo(function AnalysisContent({
     <div className="gloss">
       {tokens.map((tok, i) => (
         <div key={i} className={`tok ${tok.notable ? 'key' : ''} ${highlighted(side, i)}`}>
-          <span className="sp">{tok.text}</span>
+          <span className="sp" dir="auto">{tok.text}</span>
+          {showRomanization && tok.romanization && (
+            <span className="proman">{tok.romanization}</span>
+          )}
           {tok.gloss && <span className="gl">{tok.gloss}</span>}
           {tok.pos && <span className="po">{tok.pos}</span>}
         </div>
@@ -80,7 +96,7 @@ export const AnalysisContent = memo(function AnalysisContent({
         You said
       </p>
       {a.user_tokens && a.user_tokens.length > 0 ? (
-        tokenSentence(a.user_tokens)
+        showRomanization ? tokenSentenceRomanized(a.user_tokens) : tokenSentence(a.user_tokens)
       ) : turn.user ? (
         <p className="sentence">{turn.user}</p>
       ) : null}
@@ -89,7 +105,11 @@ export const AnalysisContent = memo(function AnalysisContent({
       <p className="sect-k" style={{ marginBottom: 8 }}>
         Tutor replied
       </p>
-      {a.tokens.length > 0 ? tokenSentence(a.tokens) : <p className="sentence">{a.reply}</p>}
+      {a.tokens.length > 0
+        ? showRomanization
+          ? tokenSentenceRomanized(a.tokens)
+          : tokenSentence(a.tokens)
+        : <p className="sentence">{a.reply}</p>}
       {a.translation && <p className="trans-d">{a.translation}</p>}
 
       {a.tokens.length > 0 && (

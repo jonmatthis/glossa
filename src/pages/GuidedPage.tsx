@@ -439,6 +439,12 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
 
   const latestAssistantId = [...turns].reverse().find((t) => t.assistant)?.id ?? null
 
+  // Romanization shows for targets whose script needs it (Arabic → ALA-LC).
+  const showRomanization =
+    settings != null &&
+    (LANGUAGES.find((l) => l.code === settings.target_language)?.romanization ??
+      null) !== null
+
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
     ? (LANGUAGES.find((l) => l.code === settings.target_language)?.name ??
@@ -664,6 +670,16 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
         }
       } else logWarn('[mic] transcription was empty (silence?)')
     },
+    buildPrompt: () => {
+      // Whisper context hint. Keep it TARGET-LANGUAGE ONLY: the hint text
+      // itself teaches the model what language to emit, so English content
+      // here causes doubled Arabic+English transcripts. Few natural words
+      // from the recent conversation are the strongest bias.
+      const lines = turnsRef.current
+        .slice(-4)
+        .flatMap((t) => [t.user, t.assistant?.reply].filter(Boolean) as string[])
+      return [...lines].join('\n').slice(0, 850)
+    },
   })
   toggleMicRef.current = mic.toggleMic
 
@@ -702,6 +718,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
               focused={(pinnedId ?? latestAssistantId) === turn.id}
               ttsReady={ttsReady}
               revealed={revealed}
+              showRomanization={showRomanization}
               onReveal={onReveal}
               onBubbleTap={onBubbleTap}
               onSpeak={speakReply}
@@ -941,6 +958,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
                     turn={pinnedTurn}
                     inspect={inspect}
                     nativeLanguageName={nativeLanguageName}
+                    showRomanization={showRomanization}
                     qaPairs={qaPairs}
                   />
                 ) : (

@@ -22,7 +22,7 @@ use std::time::Duration;
 
 // STT (Groq Whisper) — central here so a provider/model switch is one edit.
 const GROQ_STT_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
-const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
+const GROQ_STT_MODEL: &str = "whisper-large-v3";
 /// Android WebView emits webm/opus; iOS emits mp4/aac — the upload type must
 /// follow the platform when the ladder reaches iOS.
 const STT_UPLOAD_MIME: &str = "audio/webm";
@@ -445,6 +445,9 @@ pub struct GuidedToken {
     /// Grammatically interesting form worth the learner's attention.
     #[serde(default)]
     pub notable: bool,
+    /// Romanized form for non-Latin scripts (ALA-LC for Arabic).
+    #[serde(default)]
+    pub romanization: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1682,6 +1685,7 @@ pub fn get_plan(state: State<'_, AppState>) -> Result<ObserverDocuments, String>
 pub async fn transcribe_audio(
     state: State<'_, AppState>,
     audio_base64: String,
+    prompt: Option<String>,
 ) -> Result<String, String> {
     let settings = state
         .settings
@@ -1713,6 +1717,9 @@ pub async fn transcribe_audio(
         .text("model", GROQ_STT_MODEL)
         .text("language", language)
         .text("response_format", "json")
+        // Context hint: biases recognition toward live vocabulary. Whisper
+        // leans on this heavily for lower-resource languages like Arabic.
+        .text("prompt", prompt.unwrap_or_default())
         .part("file", file_part);
 
     let client = reqwest::Client::builder()

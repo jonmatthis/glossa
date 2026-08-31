@@ -44,6 +44,7 @@ interface TokenSpanProps {
   tok: GuidedToken
   revealed: boolean
   hasTranslation: boolean
+  showRomanization: boolean
   onTap: (e: React.MouseEvent<HTMLSpanElement>) => void
   onDragStart: () => void
   onDragOver: () => void
@@ -55,6 +56,7 @@ function TokenSpan({
   tok,
   revealed,
   hasTranslation,
+  showRomanization,
   onTap,
   onDragStart,
   onDragOver,
@@ -119,6 +121,9 @@ function TokenSpan({
         {tok.text}
       </span>
       {revealed && tok.gloss && <span className="wg">{tok.gloss}</span>}
+      {revealed && showRomanization && tok.romanization && (
+        <span className="wroman">{tok.romanization}</span>
+      )}
     </span>
   )
 }
@@ -128,6 +133,7 @@ export interface TurnViewProps {
   focused: boolean
   ttsReady: boolean
   revealed: Set<string>
+  showRomanization: boolean
   onReveal: (keys: string[]) => void
   onBubbleTap: (id: number) => void
   onSpeak: (text: string) => void
@@ -144,6 +150,7 @@ export const TurnView = memo(function TurnView({
   focused,
   ttsReady,
   revealed,
+  showRomanization,
   onReveal,
   onBubbleTap,
   onSpeak,
@@ -224,6 +231,7 @@ export const TurnView = memo(function TurnView({
             tok={tok}
             revealed={isRevealed}
             hasTranslation={!!translation}
+            showRomanization={showRomanization}
             onTap={(e) => tokenTap(tok, si, translation, e)}
             onDragStart={() => beginDrag(turnId, gi)}
             onDragOver={() => dragOver(turnId, gi)}

@@ -27,7 +27,8 @@ commit"; the whole app tree is untracked).
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
-| **Language pair switching** — es-ES ⇄ fr-FR, any native language; documents archived on switch; full conversation reset + fresh greeting in the new language | `languages.rs`, `commands.rs::save_settings`, `GuidedPage` pair-change effect |
+| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar-LE (Levantine), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language | `languages.rs`, `commands.rs::save_settings`, `GuidedPage` pair-change effect |
+| **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP), unvocalized typing convention; **Whisper gets a context hint** (recent turns + focus + vocab) because lower-resource languages need the bias | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.wroman`/`.proman` UI |
 | **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split), **interactive persisted coach thread**, analysis Q&A | `commands.rs` coach pass + `coach_ask`/`get_coach_thread`, `coach.md`, Coach pane |
 | **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
 | **Learner interrogation** — your own messages get tokenized + translated; click/drag/dblclick/right-click/press-and-hold on learner AND tutor words | `LearnerTokensOut`, `TokenSpan`, `word_insight` command, `WordInsightModal` |

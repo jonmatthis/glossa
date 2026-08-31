@@ -25,6 +25,7 @@ export interface GuidedToken {
   gloss: string | null
   pos: string | null
   notable: boolean
+  romanization: string | null
 }
 
 export interface Mechanic {
