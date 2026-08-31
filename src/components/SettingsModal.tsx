@@ -352,7 +352,10 @@ export function SettingsModal({
           <label>I want to learn</label>
           <select
             value={settings.target_language}
-            onChange={(e) => setSettings({ ...settings, target_language: e.target.value })}
+            onChange={(e) => {
+              // Changing language resets the dialect to that language's default.
+              setSettings({ ...settings, target_language: e.target.value, target_dialect: '' })
+            }}
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -360,6 +363,21 @@ export function SettingsModal({
               </option>
             ))}
           </select>
+        </div>
+      ),
+    },
+    target_dialect: {
+      section: 'languages',
+      label: L('target_dialect', 'Regional variety'),
+      kw: 'dialect regional variety accent region levantine mexican',
+      node: (
+        <div className="form-row">
+          <label>Regional variety (free text — passed to the AI)</label>
+          <input
+            value={settings.target_dialect}
+            placeholder="e.g. Levantine, Mexican, Québécois…"
+            onChange={(e) => setSettings({ ...settings, target_dialect: e.target.value })}
+          />
         </div>
       ),
     },

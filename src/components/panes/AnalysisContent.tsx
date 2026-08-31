@@ -19,7 +19,6 @@ interface AnalysisContentProps {
   nativeLanguageName: string
   showRomanization: boolean
   rtl: boolean
-  qaPairs: { q: string; a: string }[]
 }
 
 /// The pinned turn's full breakdown: learner words, tutor words, per-token
@@ -30,7 +29,6 @@ export const AnalysisContent = memo(function AnalysisContent({
   nativeLanguageName,
   showRomanization,
   rtl,
-  qaPairs,
 }: AnalysisContentProps) {
   const a = turn.assistant
   if (!a) {
@@ -158,16 +156,6 @@ export const AnalysisContent = memo(function AnalysisContent({
         </>
       )}
 
-      {qaPairs.length > 0 && (
-        <div className="qa-thread">
-          {qaPairs.map((p, i) => (
-            <div key={i} className="qa-pair">
-              <div className="qa-q">{p.q}</div>
-              <div className="qa-a">{p.a}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </>
   )
 })

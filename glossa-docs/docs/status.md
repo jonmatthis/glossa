@@ -29,7 +29,8 @@ commit"; the whole app tree is untracked).
 | Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
 | **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar-LE (Levantine), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language | `languages.rs`, `commands.rs::save_settings`, `GuidedPage` pair-change effect |
 | **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP), unvocalized typing convention; Whisper gets a target-language-only context hint (recent turns) because hint language leaks into transcripts; RTL token rendering via `row-reverse` lines (flex order overrides bidi) | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.rtl-line`/`.wroman` UI |
-| **Coach sidebar** — per-message feedback (remark, corrections, scores, language-split), **interactive persisted coach thread**, analysis Q&A | `commands.rs` coach pass + `coach_ask`/`get_coach_thread`, `coach.md`, Coach pane |
+| **Unified right panel** — Coach / Analysis tabs (one pane, both views); coach thread persists inside the Coach tab; analysis Q&A chat removed | `components/panes/CoachAnalysisPanel.tsx` |
+| **Mobile mode = window mode** — window below 860px switches to tabbed single-surface layout (bottom nav: Chat ⇄ Coach/Analysis); desktop shrinks into it for testing | `GuidedPage` matchMedia effect, `.mobile-nav` |
 | **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
 | **Learner interrogation** — your own messages get tokenized + translated; click/drag/dblclick/right-click/press-and-hold on learner AND tutor words | `LearnerTokensOut`, `TokenSpan`, `word_insight` command, `WordInsightModal` |
 | **Interactive coach thread** — persisted private side-chat with the coach; analysis Q&A input | `coach_ask`, `coach_thread.json`, Coach pane input |
@@ -117,6 +118,17 @@ the app loads no remote content).
 ### R14 · Assorted sharp edges — **partially fixed**
 - Story cache restore only looks up the `beginner` slot regardless of last
   used level (`StoriesPage.tsx`). — **open**
+- Desktop window no longer blocks at 900px: `minWidth` is 360 so the window
+  snaps into the same mobile layout as phones (single column, collapsible
+  panes) — makes desktop mobile-mode testing trivial.
+- Analysis Q&A chat **removed** — the app has exactly two chats: the partner
+  conversation and the coach thread. Analysis is a read-only breakdown pane.
+- Steering changes (level/topic) now trigger a partner message: the partner
+  acknowledges the new setting and re-opens the conversation with a fitting
+  question. Rust `guided_turn(steering)` + frontend effect.
+- **Prompt registry**: `Settings.prompt_overrides` plumbed (persisted
+  BTreeMap, absent = default). Remaining: the Settings "Prompts" UI section
+  with per-prompt edit + reset.
 - Stale scaffold chips when generation fails — **fixed**: steering changes
   regenerate scaffolds via a dedicated `generate_scaffolds` command; failures
   surface as a visible ⚠ in the suggestion header (best-available fallback

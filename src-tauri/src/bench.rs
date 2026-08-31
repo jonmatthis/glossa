@@ -67,7 +67,7 @@ async fn model_bench() {
         eprintln!("\n================ {} ================", model);
 
         // 1. Streaming greeting reply (TTFT + total).
-        let sys = prompts::guided_reply_prompt("es-ES", tln, "A2", native, "");
+        let sys = prompts::guided_reply_prompt("es-ES", tln, "A2", native, "", "");
         let messages = vec![
             serde_json::json!({"role": "system", "content": sys}),
             serde_json::json!({"role": "user", "content": "[Session start] Greet the learner warmly and ask one simple opening question they can answer at their level."}),

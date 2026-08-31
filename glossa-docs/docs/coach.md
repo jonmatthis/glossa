@@ -25,7 +25,7 @@ feeds the reply agent anything.
 
 | | Native-speaker agent | Coach agent |
 |---|---|---|
-| Language | target only, always | mixed — corrections in the learner's native language, corrected phrases in the target |
+| Language | target only, always | **predominantly native** — the pane is the learner's refuge from the target-language conversation; target language appears only in quoted corrections and example phrases. A remark that reads like more target-language practice is a prompt-level failure. |
 | Job | conversation partner | make the learner operate above their level |
 | Sees | the chat (learner + its own replies) | the chat + learner profile + teaching plan + its own coaching history |
 | Never | breaks character, learns the coach exists | talks to the native agent |

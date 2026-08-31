@@ -186,6 +186,15 @@ body {
 .roman-inline { font-size: 11px; color: var(--steel); font-family: var(--mono); font-style: normal; }
 .sentence.rtl { direction: rtl; font-size: 21px; }
 .proman { font-size: 10px; color: var(--steel); font-family: var(--mono); font-style: normal; }
+/* Unified panel tabs (Coach / Analysis) */
+.panel-tabs { display: flex; gap: 4px; padding: 8px 14px 0; flex: none; }
+.panel-tab {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; padding: 5px 12px; border-radius: 6px;
+  border: 1px solid transparent; background: none; color: var(--mut-d); cursor: pointer;
+}
+.panel-tab:hover { color: var(--ink-d); }
+.panel-tab.active { color: var(--steel); border-color: var(--steel); background: var(--inset); }
 /* Flex layout overrides the Unicode bidi algorithm: for RTL targets the
    token line must run row-reverse so the first word (DOM order) appears
    rightmost. */
@@ -656,17 +665,30 @@ body {
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
-/* Mobile: analysis panel becomes a collapsible bottom panel under the chat.
-   min-height:0 on .chat is the load-bearing line — without it the chat's
-   content height pushes the composer off-screen instead of scrolling. */
+/* Mobile mode: the window snapping below the breakpoint IS mobile mode —
+   a tabbed single-surface layout (bottom nav switches Chat ⇄ Coach/Analysis)
+   instead of one unusable stacked column. */
+.mobile-hidden { display: none !important; }
+.mobile-nav {
+  flex: none; display: flex; border-top: 1px solid var(--line);
+  background: var(--chrome); padding-bottom: env(safe-area-inset-bottom);
+}
+.mobile-nav-item {
+  flex: 1; padding: 10px 0; border: none; background: none;
+  color: var(--mut-d); font-size: 13px; cursor: pointer;
+}
+.mobile-nav-item.active { color: var(--steel); background: var(--inset); }
 @media (max-width: 860px) {
   .split { flex-direction: column; }
   .chat { flex: 1 1 auto; min-height: 0; }
-  .break { flex: 0 0 46%; min-height: 0; overflow: hidden; border-top: 1px solid var(--line); }
-  .break.collapsed { flex: 0 0 auto; border-top: none; }
+  .break { flex: 1 1 auto; min-height: 0; overflow: hidden; }
   .msg { max-width: 94%; }
   /* iOS zooms any focused input under 16px — keep inputs at 16 on touch. */
   .field, .form-row input, .form-row select { font-size: 16px; }
+  .settings-modal { flex-direction: column; }
+  .settings-nav { width: 100%; flex-direction: row; overflow-x: auto; }
+  .plan-drawer { width: 100%; }
+  .insight-modal { width: 94vw; }
 }
 
 /* Touch + notched-screen niceties */

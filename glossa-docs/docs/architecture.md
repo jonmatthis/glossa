@@ -210,6 +210,23 @@ Retry counters (429 / parse / validation / exhausted) are session-scoped and
 visible in the logs overlay header, so a misbehaving model or prompt shows up
 as climbing numbers instead of silent success.
 
+## Prompt registry (user-editable prompts)
+
+Every AI prompt is addressable by id (`chat.reply`, `chat.tokens`,
+`chat.mechanics`, `chat.scaffolds`, `learner.tokens`, `coach.feedback`,
+`coach.thread`, `story`, `observer`, `word.insight`). Planned surface:
+
+- `Settings.prompt_overrides: BTreeMap<String, String>` — user edits
+  persist in `settings.json`; absent/empty = built-in default applies.
+- Settings → a "Prompts" section listing each id with its effective text
+  (default or override), an edit box, and a reset-to-default button.
+- Prompt builders consult the override before falling back to the built-in
+  template; placeholders (`{tln}`, `{native}`, `{dialect}`, …) work in
+  overrides exactly as in defaults.
+
+The `prompt_overrides` settings field is the plumbing; the UI section is the
+remaining work (tracked below).
+
 ## Voice pipeline: STT + TTS
 
 **STT (speech → text):** Groq `whisper-large-v3-turbo`. The mic stream is

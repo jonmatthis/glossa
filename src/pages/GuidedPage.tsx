@@ -17,8 +17,7 @@ import { normalizeDocs } from '../lib/normalize'
 import { WaveformStrip } from '../components/WaveformStrip'
 import { WordInsightModal } from '../components/WordInsightModal'
 import { TurnView } from '../components/chat/TurnView'
-import { CoachFeed } from '../components/panes/CoachFeed'
-import { AnalysisContent } from '../components/panes/AnalysisContent'
+import { CoachAnalysisPanel } from '../components/panes/CoachAnalysisPanel'
 import { logError, logInfo, logWarn } from '../lib/log'
 import { STEER_LEVELS, STEER_TOPICS, useSteering, armGreeting, disarmGreeting } from '../hooks/useSteering'
 import { useMicRecorder } from '../hooks/useMicRecorder'
@@ -34,9 +33,6 @@ interface Turn {
   coachError?: string
 }
 
-const SPLIT_STORAGE_KEY = 'glossa_split'
-const COACH_COLLAPSED_KEY = 'glossa_coach_collapsed'
-const ANALYSIS_COLLAPSED_KEY = 'glossa_analysis_collapsed'
 
 function ScaffoldRow({
   label,
@@ -99,28 +95,6 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     [wordPopup]
   )
   const { open: breakOpen, toggle: toggleBreak } = usePersistentToggle('glossa_break', true)
-  const [coachCollapsed, setCoachCollapsed] = useState<boolean>(
-    () => localStorage.getItem(COACH_COLLAPSED_KEY) === '1'
-  )
-  const [analysisCollapsed, setAnalysisCollapsed] = useState<boolean>(
-    () => localStorage.getItem(ANALYSIS_COLLAPSED_KEY) === '1'
-  )
-  const [splitPct, setSplitPct] = useState<number>(() => {
-    const v = Number(localStorage.getItem(SPLIT_STORAGE_KEY))
-    return Number.isFinite(v) && v >= 20 && v <= 80 ? v : 45
-  })
-  const toggleCoach = useCallback(() => {
-    setCoachCollapsed((c) => {
-      localStorage.setItem(COACH_COLLAPSED_KEY, c ? '0' : '1')
-      return !c
-    })
-  }, [])
-  const toggleAnalysis = useCallback(() => {
-    setAnalysisCollapsed((c) => {
-      localStorage.setItem(ANALYSIS_COLLAPSED_KEY, c ? '0' : '1')
-      return !c
-    })
-  }, [])
   const steer = useSteering()
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set())
   const onReveal = useCallback((keys: string[]) => {
@@ -165,13 +139,13 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       if (!v.length) logWarn('[tts] no OS voices found — speech disabled')
     })
     // Greeting fires once per module session; a new session also clears the
-    // coach thread.
-    if (isTauri && armGreeting()) {
+    // coach thread. Skips if a turn already exists (HMR remount safety).
+    if (isTauri && armGreeting() && turnsRef.current.length === 0) {
       logInfo('[guided] firing greeting turn')
       void requestTurn({ greeting: true })
-      void invoke('coach_thread_clear')
-        .then(() => setCoachThread([]))
-        .catch((e) => logWarn('[coach] thread reset failed:', e))
+      void invoke('coach_thread_clear').catch((e: unknown) =>
+        logWarn('[coach] thread reset failed:', e)
+      )
       setRevealed(new Set())
       setFreshScaffolds(null)
     }
@@ -210,12 +184,11 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     (id: number) => {
       setPinnedId(id)
       if (!breakOpen) toggleBreak()
-      if (coachCollapsed) toggleCoach()
     },
-    [breakOpen, toggleBreak, coachCollapsed, toggleCoach]
+    [breakOpen, toggleBreak]
   )
   const requestTurn = useCallback(
-    async (body: { message?: string; greeting?: boolean }) => {
+    async (body: { message?: string; greeting?: boolean; steering?: string }) => {
       setSending(true)
       setError(null)
       logInfo('[guided] turn start:', {
@@ -351,6 +324,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           message: body.message ?? '',
           history,
           greeting: body.greeting ?? false,
+          steering: body.steering ?? null,
           level: steer.level,
           topic: steer.topic || null,
           onEvent: channel,
@@ -386,8 +360,6 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     setPinnedId(null)
     setRevealed(new Set())
     setFreshScaffolds(null)
-    setQaPairs([])
-    setCoachThread([])
     setInspect(null)
     setWordPopup(null)
     setError(null)
@@ -480,9 +452,8 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       setPinnedId(turnId)
       setInspect({ turn: turnId, side, index })
       if (!breakOpen) toggleBreak()
-      if (analysisCollapsed) toggleAnalysis()
     },
-    [breakOpen, toggleBreak, analysisCollapsed, toggleAnalysis]
+    [breakOpen, toggleBreak]
   )
 
   // Deep word insight (press-and-hold / analysis-pane click): a modal that
@@ -511,26 +482,6 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   }, [])
 
 
-  const onSplitDown = (e: React.PointerEvent) => {
-    const el = breakRef.current
-    if (!el) return
-    e.preventDefault()
-    const startY = e.clientY
-    const startPct = splitPct
-    const rect = el.getBoundingClientRect()
-    const move = (ev: PointerEvent) => {
-      const pct = startPct + ((ev.clientY - startY) / rect.height) * 100
-      const clamped = Math.min(80, Math.max(20, pct))
-      setSplitPct(clamped)
-      localStorage.setItem(SPLIT_STORAGE_KEY, String(Math.round(clamped)))
-    }
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-  }
 
   // Fresh scaffolds: regenerated when steering changes, so suggestions track
   // level/topic instead of going stale. Turn analysis clears this override.
@@ -556,7 +507,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           })
           .slice(-8)
         const s = await invoke<Scaffolds>('generate_scaffolds', {
-          req: { history, level, topic: topic || null },
+          req: { history, level, topic: topic || null, dialect: settings?.target_dialect || null },
         })
         setFreshScaffolds(s)
       } catch (e) {
@@ -574,9 +525,20 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       steerInitialized.current = true
       return
     }
-    const t = setTimeout(() => void regenerateScaffolds(steer.level, steer.topic), 300)
+    // Steering change: regenerate scaffolds AND have the partner re-open the
+    // conversation aligned to the new level/topic.
+    const t = setTimeout(() => {
+      void regenerateScaffolds(steer.level, steer.topic)
+      const change = [
+        steer.level ? `level: ${steer.level}` : null,
+        steer.topic ? `topic: ${steer.topic}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ')
+      void requestTurn({ message: '', steering: change })
+    }, 300)
     return () => clearTimeout(t)
-  }, [steer.level, steer.topic, regenerateScaffolds])
+  }, [steer.level, steer.topic, regenerateScaffolds, requestTurn])
 
   // Chips: fresh steer-driven scaffolds win; otherwise the newest turn that
   // produced any (best-available across turns).
@@ -584,78 +546,18 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     freshScaffolds ??
     latestScaffolds ?? { replies: [], frames: [], starters: [] }
 
-  // Coach thread (interactive sidebar chat — private to the learner).
-  const [coachThread, setCoachThread] = useState<{ role: string; content: string }[]>([])
-  const [coachInput, setCoachInput] = useState('')
-  const [coachThinking, setCoachThinking] = useState(false)
-  useEffect(() => {
-    if (!isTauri) return
-    void invoke<{ role: string; content: string }[]>('get_coach_thread')
-      .then(setCoachThread)
-      .catch((e) => logWarn('[coach] thread load failed:', e))
-  }, [settingsVersion])
-  const coachAsk = useCallback(
-    async (question: string) => {
-      const q = question.trim()
-      if (!q || coachThinking) return
-      setCoachThinking(true)
-      setCoachThread((t) => [...t, { role: 'user', content: q }])
-      try {
-        const ctx = turnsRef.current
-          .slice(-8)
-          .flatMap((t) =>
-            [
-              t.user ? `LEARNER: ${t.user}` : null,
-              t.assistant ? `NATIVE: ${t.assistant.reply}` : null,
-            ].filter(Boolean) as string[]
-          )
-          .join('\n')
-        const res = await invoke<{ reply: string }>('coach_ask', { question: q, context: ctx })
-        setCoachThread((t) => [...t, { role: 'coach', content: res.reply }])
-      } catch (e) {
-        logError('[coach] ask failed:', e)
-        setCoachThread((t) => [...t, { role: 'coach', content: `⚠ ${String(e)}` }])
-      } finally {
-        setCoachThinking(false)
-      }
-    },
-    [coachThinking]
-  )
-  const coachClear = useCallback(() => {
-    void invoke('coach_thread_clear').catch((e) => logWarn('[coach] clear failed:', e))
-    setCoachThread([])
-  }, [])
-
-  // Analysis Q&A (session-scoped).
-  const [qaPairs, setQaPairs] = useState<{ q: string; a: string }[]>([])
-  const [qaInput, setQaInput] = useState('')
-  const [qaThinking, setQaThinking] = useState(false)
-  const askAnalysis = useCallback(async () => {
-    const q = qaInput.trim()
-    if (!q || qaThinking) return
-    const pinned = turnsRef.current.find((t) => t.id === pinnedId) ?? null
-    const ctx = [
-      pinned?.user ? `LEARNER SAID: ${pinned.user}` : null,
-      pinned?.assistant?.user_translation ? `(meant: ${pinned.assistant.user_translation})` : null,
-      pinned?.assistant ? `TUTOR REPLIED: ${pinned.assistant.reply}` : null,
-      pinned?.assistant?.translation ? `(${pinned.assistant.translation})` : null,
-      pinned?.assistant?.mechanics.length
-        ? `GRAMMAR NOTES: ${pinned.assistant.mechanics.map((m) => m.title).join('; ')}`
-        : null,
-    ]
-      .filter(Boolean)
+  // Context for the coach thread inside the unified panel.
+  const buildCoachContext = useCallback(() => {
+    return turnsRef.current
+      .slice(-8)
+      .flatMap((t) =>
+        [
+          t.user ? `LEARNER: ${t.user}` : null,
+          t.assistant ? `NATIVE: ${t.assistant.reply}` : null,
+        ].filter(Boolean) as string[]
+      )
       .join('\n')
-    setQaThinking(true)
-    setQaInput('')
-    try {
-      const a = await invoke<string>('analysis_ask', { question: q, context: ctx })
-      setQaPairs((p) => [...p, { q, a }])
-    } catch (e) {
-      setQaPairs((p) => [...p, { q, a: `⚠ ${String(e)}` }])
-    } finally {
-      setQaThinking(false)
-    }
-  }, [qaInput, qaThinking, pinnedId])
+  }, [])
 
   // Analysis highlight: scroll the inspected token into view.
   useEffect(() => {
@@ -696,10 +598,25 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [inspect])
 
+  // Mobile mode: below the breakpoint the window switches to a tabbed
+  // single-surface layout (Chat / Coach / Analysis) instead of stacking
+  // everything into one unusable column.
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 860
+  )
+  const [mobileSurface, setMobileSurface] = useState<'chat' | 'panel'>('chat')
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 860px)')
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    setIsMobile(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
   return (
     <div className="split">
       {/* ── Chat half (paper) ─────────────────────────────────────────── */}
-      <section className="chat">
+      <section className={`chat ${isMobile && mobileSurface !== 'chat' ? 'mobile-hidden' : ''}`}>
         <div className="chat-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>Conversation · {targetLanguageName}</span>
           <button
@@ -849,8 +766,13 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
         </div>
       </section>
 
-      {/* ── Breakdown half (dark) ─────────────────────────────────────── */}
-      <section className={`break ${breakOpen ? '' : 'collapsed'}`} ref={breakRef}>
+      {/* ── Breakdown half (dark) — full panel in mobile Coach/Analysis mode ── */}
+      <section
+        className={`break ${breakOpen ? '' : 'collapsed'} ${
+          isMobile && mobileSurface === 'chat' ? 'mobile-hidden' : ''
+        }`}
+        ref={breakRef}
+      >
         <button
           type="button"
           className="break-head"
@@ -865,139 +787,41 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           </span>
         </button>
 
-        {/* Coach pane (top of the vertical split) */}
-        <section
-          className={`subpanel ${coachCollapsed ? 'collapsed' : ''}`}
-          style={
-            coachCollapsed
-              ? undefined
-              : analysisCollapsed
-                ? { flex: '1 1 auto' }
-                : { flex: `0 0 ${splitPct}%` }
-          }
-        >
-          <div className="subpanel-head">
-            <span className="k">Coach</span>
-            <button
-              type="button"
-              className="subpanel-toggle"
-              onClick={toggleCoach}
-              aria-expanded={!coachCollapsed}
-              title={coachCollapsed ? 'Expand coach' : 'Collapse coach'}
-            >
-              {coachCollapsed ? '▸' : '▾'}
-            </button>
-          </div>
-          {!coachCollapsed && (
-            <>
-              <CoachFeed
-                turns={turns}
-                targetLangCode={(settings?.target_language ?? 'es-ES').split('-')[0].toUpperCase()}
-                nativeLangCode={(settings?.native_language ?? 'en').toUpperCase()}
-              />
-              <div className="coach-thread">
-                {coachThread.map((m, i) => (
-                  <div key={i} className={`coach-msg ${m.role}`}>
-                    {m.content}
-                  </div>
-                ))}
-                {coachThinking && <div className="coach-msg coach">⟳ thinking…</div>}
-              </div>
-              <form
-                className="coach-input-row"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void coachAsk(coachInput)
-                  setCoachInput('')
-                }}
-              >
-                <input
-                  className="coach-input"
-                  value={coachInput}
-                  onChange={(e) => setCoachInput(e.target.value)}
-                  placeholder="Ask the coach…"
-                  disabled={!isTauri}
-                  lang={settings?.native_language ?? 'en'}
-                />
-                <button type="submit" className="coach-send" disabled={!coachInput.trim() || coachThinking}>
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="coach-clear"
-                  title="Clear coach thread"
-                  onClick={coachClear}
-                >
-                  ⌫
-                </button>
-              </form>
-            </>
-          )}
-        </section>
-
-        {/* Resize divider */}
-        {breakOpen && !coachCollapsed && !analysisCollapsed && (
-          <div className="split-bar" onPointerDown={onSplitDown} title="Drag to resize" />
-        )}
-
-        {/* Analysis pane (bottom of the vertical split) */}
-        <section
-          className={`subpanel analysis-pane ${analysisCollapsed ? 'collapsed' : ''}`}
-          style={analysisCollapsed ? undefined : { flex: '1 1 auto' }}
-        >
-          <div className="subpanel-head">
-            <span className="k">Analysis</span>
-            <button
-              type="button"
-              className="subpanel-toggle"
-              onClick={toggleAnalysis}
-              aria-expanded={!analysisCollapsed}
-              title={analysisCollapsed ? 'Expand analysis' : 'Collapse analysis'}
-            >
-              {analysisCollapsed ? '▸' : '▾'}
-            </button>
-          </div>
-          {!analysisCollapsed && (
-            <>
-              <div className="analysis-scroll">
-                {pinnedTurn ? (
-                  <AnalysisContent
-                    turn={pinnedTurn}
-                    inspect={inspect}
-                    nativeLanguageName={nativeLanguageName}
-                    showRomanization={showRomanization}
-                    rtl={rtl}
-                    qaPairs={qaPairs}
-                  />
-                ) : (
-                  <p className="center-note">
-                    The breakdown of the tutor&apos;s latest reply lands here.
-                  </p>
-                )}
-              </div>
-              <form
-                className="qa-input-row"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void askAnalysis()
-                }}
-              >
-                <input
-                  className="qa-input"
-                  value={qaInput}
-                  onChange={(e) => setQaInput(e.target.value)}
-                  placeholder="Ask about the analysis…"
-                  disabled={!isTauri}
-                  lang={settings?.native_language ?? 'en'}
-                />
-                <button type="submit" className="qa-send" disabled={!qaInput.trim() || qaThinking}>
-                  ↑
-                </button>
-              </form>
-            </>
-          )}
-        </section>
+        {/* Unified right panel: Coach + Analysis tabs (see panes/) */}
+        <CoachAnalysisPanel
+          turns={turns}
+          targetLangCode={(settings?.target_language ?? 'es-ES').split('-')[0].toUpperCase()}
+          nativeLangCode={(settings?.native_language ?? 'en').toUpperCase()}
+          pinnedTurn={pinnedTurn}
+          inspect={inspect}
+          nativeLanguageName={nativeLanguageName}
+          showRomanization={showRomanization}
+          rtl={rtl}
+          settingsVersion={settingsVersion}
+          buildCoachContext={buildCoachContext}
+        />
       </section>
+
+      {/* Mobile bottom navigation: switch surfaces instead of stacking them */}
+      {isMobile && (
+        <nav className="mobile-nav">
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileSurface === 'chat' ? 'active' : ''}`}
+            onClick={() => setMobileSurface('chat')}
+          >
+            💬 Chat
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileSurface === 'panel' ? 'active' : ''}`}
+            onClick={() => setMobileSurface('panel')}
+          >
+            🎓 Coach
+          </button>
+        </nav>
+      )
+      }
 
       {/* ── Plan & Profile drawer (fully observable) ──────────────────── */}
       {planOpen && (

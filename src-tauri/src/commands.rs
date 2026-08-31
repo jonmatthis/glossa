@@ -386,7 +386,8 @@ pub fn save_settings(state: State<'_, AppState>, mut settings: Settings) -> Resu
     // languages) and start fresh for the new pairing. Archived files keep
     // every old document recoverable.
     let pairing_changed = stored.target_language != settings.target_language
-        || stored.native_language != settings.native_language;
+        || stored.native_language != settings.native_language
+        || stored.target_dialect != settings.target_dialect;
     if pairing_changed {
         let archive = |name: &str| {
             let src = state.config_dir.join(name);
@@ -607,6 +608,10 @@ pub async fn guided_turn(
     message: String,
     history: Vec<ChatTurn>,
     greeting: bool,
+    // Present when the learner changed practice settings — the partner
+    // sends a re-opening message aligned to the new level/topic instead of
+    // answering a learner message.
+    steering: Option<String>,
     level: Option<String>,
     topic: Option<String>,
     on_event: Channel<GuidedEvent>,
@@ -629,6 +634,8 @@ pub async fn guided_turn(
     );
     let tln = language_display(&target);
     let native = native_display(&settings.native_language);
+    let target_overlay =
+        overlay(&target, Some(settings.target_dialect.as_str()));
     // Learner-selected level (steer row) maps to CEFR for every prompt.
     let cefr = match level.as_deref() {
         Some("intermediate") => "B1",
@@ -665,6 +672,7 @@ pub async fn guided_turn(
         &tln,
         &cefr,
         &native,
+        &target_overlay,
         &directives,
     );
     let mut reply_messages = vec![json!({"role": "system", "content": reply_system})];
@@ -675,6 +683,18 @@ pub async fn guided_turn(
         reply_messages.push(json!({
             "role": "user",
             "content": "[Session start] Greet the learner warmly and ask one simple opening question they can answer at their level."
+        }));
+    } else if let Some(change) = steering.as_deref().filter(|s| !s.trim().is_empty()) {
+        // Learner changed practice settings mid-conversation: the partner
+        // re-opens the exchange aligned to the new level/topic.
+        reply_messages.push(json!({
+            "role": "user",
+            "content": format!(
+                "[The learner just adjusted their practice settings: {change}. \
+                 Acknowledge the change naturally in one short sentence and \
+                 re-open the conversation with a fresh question or prompt that \
+                 fits the new setting. Do not mention UI or settings mechanics.]"
+            )
         }));
     } else {
         if message.trim().is_empty() {
@@ -821,6 +841,8 @@ pub async fn guided_turn(
     // dump. Failures degrade per-section.
     let learner_message = if greeting {
         "(session start)".to_string()
+    } else if let Some(change) = steering.as_deref().filter(|s| !s.trim().is_empty()) {
+        format!("(changed practice settings: {change})")
     } else {
         message.trim().to_string()
     };
@@ -1364,40 +1386,6 @@ pub async fn coach_ask(
     Ok(CoachReply { reply })
 }
 
-/// Ask a question about the Analysis pane content (grammar, a word, a
-/// construction). Session-scoped: answers are not persisted.
-#[tauri::command]
-pub async fn analysis_ask(
-    state: State<'_, AppState>,
-    question: String,
-    context: String,
-) -> Result<String, String> {
-    let question = question.trim().to_string();
-    if question.is_empty() {
-        return Err("empty question".into());
-    }
-    let stored = state
-        .settings
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
-    if stored.openrouter_key.trim().is_empty() {
-        return Err("No OpenRouter API key configured.".into());
-    }
-    let tln = crate::languages::language_display(&stored.target_language);
-    let native = crate::languages::native_display(&stored.native_language);
-    let messages = vec![
-        json!({"role": "system", "content": prompts::analysis_ask_system_prompt(&tln, &native)}),
-        json!({"role": "user", "content": format!("CONVERSATION EXCERPT:\n{context}\n\nQUESTION:\n{question}")}),
-    ];
-    let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
-    provider
-        .chat_streaming(&messages, 0.3, &mut |_| {})
-        .await
-        .map(|r| sanitize_reply(&r))
-        .map_err(|e| format!("analysis ask failed: {e}"))
-}
-
 // ─── Standalone scaffold generation (steer-row driven) ───────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -1405,6 +1393,7 @@ pub struct ScaffoldRequest {
     history: Vec<ChatTurn>,
     level: Option<String>,
     topic: Option<String>,
+    dialect: Option<String>,
 }
 
 /// Regenerate next-message scaffolds on demand — the steer row calls this
@@ -1441,7 +1430,11 @@ pub async fn generate_scaffolds(
         let plan = state.plan.lock().unwrap_or_else(|p| p.into_inner());
         observer::directives_block(&plan, &[])
     };
-    let directives = format!("{plan_directives}{topic_directive}");
+    let dialect_overlay =
+        overlay(&stored.target_language, req.dialect.as_deref());
+    let directives = format!(
+        "{dialect_overlay}{plan_directives}{topic_directive}"
+    );
     let transcript: Vec<String> = req
         .history
         .iter()
@@ -1622,7 +1615,13 @@ pub async fn generate_story(
     let native = native_display(&settings.native_language);
     let cefr = prompts::resolve_cefr(&level);
 
-    let system = prompts::story_prompt(&tln, cefr, &native, &level, overlay(&target));
+    let system = prompts::story_prompt(
+        &tln,
+        cefr,
+        &native,
+        &level,
+        &overlay(&target, Some(settings.target_dialect.as_str())),
+    );
     let messages = vec![
         json!({"role": "system", "content": system}),
         json!({

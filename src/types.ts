@@ -11,6 +11,7 @@ export interface Settings {
   openrouter_model: string
   observer_model: string | null
   target_language: string
+  target_dialect: string
   native_language: string
   microphone_device_id: string | null
   auto_speak: boolean

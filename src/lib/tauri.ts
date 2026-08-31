@@ -37,24 +37,58 @@ export async function invoke<T>(
 /// Single language registry — every entry works as BOTH target and native.
 /// `code` is the BCP-47 value stored for target_language; `base` is the
 /// value stored for native_language (and the UI language, lib/i18n.ts).
-/// `direction` and `romanization` follow the target script (RTL + ALA-LC
-/// for Arabic; None for Latin scripts).
+/// `dialects` are regional variants (first = default); `direction` and
+/// `romanization` follow the target script (RTL + ALA-LC for Arabic).
 export const LANGUAGES: {
   code: string
   base: string
   name: string
   direction: 'ltr' | 'rtl'
   romanization: string | null
+  dialects: { id: string; label: string }[]
 }[] = [
-  { code: 'en-US', base: 'en', name: 'English (US)', direction: 'ltr', romanization: null },
-  { code: 'fr-FR', base: 'fr', name: 'Français', direction: 'ltr', romanization: null },
-  { code: 'es-ES', base: 'es', name: 'Español', direction: 'ltr', romanization: null },
+  {
+    code: 'en-US',
+    base: 'en',
+    name: 'English (US)',
+    direction: 'ltr',
+    romanization: null,
+    dialects: [{ id: 'en-US', label: 'Standard American' }],
+  },
+  {
+    code: 'fr-FR',
+    base: 'fr',
+    name: 'Français',
+    direction: 'ltr',
+    romanization: null,
+    dialects: [
+      { id: 'fr-FR', label: 'France (standard)' },
+      { id: 'fr-CA', label: 'Québécois' },
+    ],
+  },
+  {
+    code: 'es-ES',
+    base: 'es',
+    name: 'Español',
+    direction: 'ltr',
+    romanization: null,
+    dialects: [
+      { id: 'es-ES', label: 'España (peninsular)' },
+      { id: 'es-MX', label: 'Mexicano' },
+      { id: 'es-AR', label: 'Rioplatense' },
+    ],
+  },
   {
     code: 'ar-LE',
     base: 'ar',
     name: 'العربية (Levantine)',
     direction: 'rtl',
     romanization: 'ALA-LC',
+    dialects: [
+      { id: 'ar-LE', label: 'Levantine' },
+      { id: 'ar-EG', label: 'Egyptian' },
+      { id: 'ar-MSA', label: 'Modern Standard' },
+    ],
   },
 ]
 

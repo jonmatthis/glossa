@@ -49,6 +49,10 @@ pub struct Settings {
     pub openrouter_model: String,
     #[serde(default = "default_target")]
     pub target_language: String,
+    /// Regional variant of the target language (id from `languages.rs`
+    /// dialects), e.g. "ar-LE" or "es-MX". Empty = language default.
+    #[serde(default)]
+    pub target_dialect: String,
     #[serde(default = "default_native")]
     pub native_language: String,
     #[serde(default)]
@@ -70,6 +74,10 @@ pub struct Settings {
     pub tts_voice: String,
     #[serde(default)]
     pub observer_model: Option<String>,
+    /// User-edited prompt overrides, keyed by prompt id. Absent/empty = the
+    /// built-in default from prompts.rs applies.
+    #[serde(default)]
+    pub prompt_overrides: std::collections::BTreeMap<String, String>,
 }
 
 fn default_tts_engine() -> String {
@@ -130,6 +138,7 @@ impl Default for Settings {
             groq_key: String::new(),
             openrouter_model: default_model(),
             target_language: default_target(),
+            target_dialect: String::new(),
             native_language: default_native(),
             microphone_device_id: None,
             auto_speak: false,
@@ -138,6 +147,7 @@ impl Default for Settings {
             tts_engine: default_tts_engine(),
             tts_voice: default_tts_voice(),
             observer_model: None,
+            prompt_overrides: std::collections::BTreeMap::new(),
         }
     }
 }

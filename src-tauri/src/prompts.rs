@@ -2,7 +2,7 @@
 //! mandatory rules) plus per-surface guidance — one source of truth for the
 //! rules, ported from the FreeLingo prompt library.
 
-use crate::languages::overlay;
+
 
 
 pub fn persona_block(
@@ -50,9 +50,10 @@ pub fn guided_reply_prompt(
     target_language_name: &str,
     cefr_level: &str,
     native_language_name: &str,
+    overlay_text: &str,
     directives: &str,
 ) -> String {
-    let overlay_section = overlay(target_language);
+    let overlay_section = overlay_text;
     format!(
         "{persona}\n\n\
          Mandatory rules (these override everything else):\n\
@@ -250,7 +251,12 @@ pub fn coach_system_prompt(target_language_name: &str, native_language_name: &st
          message? 1 = baffling, 3 = with effort, 5 = effortless.\n\
          - grammar (1-5): grammatical correctness, same scale.\n\n\
          Scores are honest - a 5 must be earned. If the message was already \
-         correct, corrections is empty and the remark says so.",
+         correct, corrections is empty and the remark says so.\n\n\
+         LANGUAGE DISCIPLINE: this pane is the learner's REFUGE. Write your \
+         remark and explanations predominantly in {native} - it must read \
+         as a relief from the {tln} conversation, not a continuation of it. \
+         Keep {tln} ONLY for quoted corrections and example phrases. A \
+         remark that reads like more {tln} practice is a failure.",
         tln = target_language_name,
         native = native_language_name,
     )
@@ -315,18 +321,6 @@ pub fn coach_thread_system_prompt(target_language_name: &str, native_language_na
          you provide would help, mark it clearly.\n\n\
          Never suggest revealing this channel to the partner. Never break the\n\
          fiction that the partner conversation is real.",
-        tln = target_language_name,
-        native = native_language_name,
-    )
-}
-
-pub fn analysis_ask_system_prompt(target_language_name: &str, native_language_name: &str) -> String {
-    format!(
-        "You are the grammar and language assistant in the Analysis pane of a\n\
-         {tln} learning app. The learner asks about words, conjugations, tense,\n\
-         usage, or constructions from their conversation. Answer in {native},\n\
-         with {tln} examples inline. Concise (2-6 sentences), precise, honest\n\
-         about nuance. Quote the exact words being asked about.",
         tln = target_language_name,
         native = native_language_name,
     )

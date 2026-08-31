@@ -87,7 +87,6 @@ pub fn run() {
             commands::get_coach_thread,
             commands::coach_ask,
             commands::coach_thread_clear,
-            commands::analysis_ask,
             commands::guided_turn,
             commands::generate_story,
             commands::transcribe_audio,
