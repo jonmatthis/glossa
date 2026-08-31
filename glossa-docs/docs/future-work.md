@@ -53,8 +53,7 @@ reply text ──► tokenize ──► lemmatize ──► dictionary lookup �
 
 Support is added rung by rung; each rung proves techniques the next one
 reuses. `TARGET_LANGUAGES` is trimmed to the current rung — a language may
-only appear in the UI once its mechanical layer exists. AI-only "support"
-is how we ended up with ten half-supported languages.
+only appear in the UI once its mechanical layer exists.
 
 1. **Spanish (es-ES)** — easiest case: space-delimited, richest open data.
 2. **Arabic** — adds RTL rendering and root-based morphology (no vowelization

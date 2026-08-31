@@ -73,33 +73,20 @@ pub struct Settings {
 }
 
 fn default_tts_engine() -> String {
-    "groq".into()
+    "cloud".into()
 }
 fn default_tts_voice() -> String {
-    "Celeste-PlayAI".into()
+    "nova".into()
 }
 
 fn default_model() -> String {
     // Worker default: gemini-2.5-flash — 6/6 on the model bench (all analysis
     // calls + story, zero retries) plus a full day of live use, zero schema
-    // failures. Structured output is decoder-enforced; ~$0.30/$2.50 per M
-    // tokens.
-    //
-    // Demoted candidates, all verified against the real call path:
-    // - deepseek-v4-flash: repetition loops, wrapper-shape failures.
-    // - gemini-3.1-flash-lite: fast/cheap but failed story gloss validation.
-    // - gemini-3.5-flash-lite: reasoning mandatory — cannot serve as a fast
-    //   worker (fails loudly, by design).
-    // - gpt-5-nano: requires strict-dialect schemas (additionalProperties:
-    //   false + all-properties-required on every nested object). Serving it
-    //   would need a schema normalizer — judged not worth the complexity
-    //   for now. Would also need temperature omitted + reasoning
-    //   effort:minimal (both handled by apply_dialect/reasoning_off).
+    // failures. Decoder-enforced structured output; ~$0.30/$2.50 per M tokens.
     "google/gemini-2.5-flash".into()
 }
 
-/// Prior worker defaults. Stored settings migrate off these on load —
-/// each was demoted after real structured-output failures or superseded.
+/// Prior worker defaults — stored settings migrate off these on load.
 const LEGACY_DEFAULT_MODELS: &[&str] = &[
     "deepseek/deepseek-v4-flash-0731",
     "google/gemini-3.1-flash-lite",
@@ -115,8 +102,6 @@ fn migrate(settings: &mut Settings) {
         );
         settings.openrouter_model = default_model();
     }
-    // playai-tts was decommissioned; the engine became "cloud" (OpenRouter
-    // gpt-audio-mini) with OpenAI voice names.
     if settings.tts_engine == "groq" {
         settings.tts_engine = "cloud".into();
     }

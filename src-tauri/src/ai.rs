@@ -36,11 +36,9 @@ pub struct Provider {
     pub model: String,
 }
 
-/// Dereference `$ref` so grammar-constrained decoders see it all.
-/// schemars 0.8 emits `definitions` (draft-07 style); other generators emit
-/// `$defs`. Accept both — unresolved refs 400 on several providers (Gemini).
-/// This function MUST actually inline: an early version looked only for
-/// `$defs` and was a silent no-op.
+/// Dereference `$ref` so grammar-constrained decoders see it all. Accept
+/// both `definitions` (schemars 0.8) and `$defs` — unresolved refs 400 on
+/// several providers (Gemini).
 pub fn inline_defs(mut schema: Value) -> Value {
     let defs = schema
         .get("$defs")
@@ -452,9 +450,7 @@ mod tests {
 use super::*;
 use serde_json::json;
 
-// Regression: inline_defs looked only for `$defs`, but schemars 0.8 emits
-// `definitions` — the function was a silent no-op and Gemini 400'd every
-// schema with nested refs.
+// Pins the definitions/$defs handling: nested refs must inline cleanly.
 #[test]
 fn inline_defs_resolves_definitions() {
     let schema = json!({

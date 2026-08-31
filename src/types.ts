@@ -144,4 +144,3 @@ export type AnalysisState = 'pending' | 'done' | 'failed'
 
 export type Level = 'beginner' | 'intermediate' | 'advanced'
 
-export type AssistLevel = 0 | 1 | 2 | 3

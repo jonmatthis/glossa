@@ -182,6 +182,30 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 - Localization of the UI itself (English-only chrome)
 - Tests, benches, telemetry (none, by design for now)
 
+## Structural refactor plan (next phase)
+
+File sizes have crossed the threshold where single-file sections hurt:
+
+| File | Lines | Pressure |
+|---|---|---|
+| `src/pages/GuidedPage.tsx` | ~1,600 | Chat stream, composer, coach pane, analysis pane, split-panel drag, shortcuts, mic, inspection — one god component |
+| `src/components/SettingsModal.tsx` | ~580 | Registry-driven but rows embed full JSX; localize/validate logic inline |
+| `src/lib/i18n.ts` | ~360 | Fine (data), grows one block per locale |
+
+Planned decomposition (do when touching these files next, not before):
+
+- `GuidedPage` → `components/chat/` (TurnView, TokenSpan, Composer, ScaffoldRow),
+  `components/panes/` (CoachPane, AnalysisPane with Q&A), `hooks/` (useReveal,
+  useShortcuts, useMicRecorder, useSteering). The token-interaction logic
+  (click/drag/hold/dblclick) is the piece most worth isolating — it is shared
+  by learner and tutor bubbles and will grow (word-insight hydration).
+- `SettingsModal` → row components extracted from the registry; the registry
+  itself is the right shape, the rows just need to stop embedding raw JSX.
+- Duplication to collapse when splitting: the token-rendering closure appears
+  per bubble; the plan-drawer section renderers repeat the same pattern.
+- After the split, sweep for cross-file duplication (normalizeDocs callers,
+  score meters, popup anchoring) and collapse into `lib/`.
+
 ## Suggested order of battle (small bites)
 
 1. **Commit the working tree.** Lowest-risk highest-value action today.

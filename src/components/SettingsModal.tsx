@@ -7,10 +7,10 @@ import {
   logWarn,
   saveSettings,
   validateKey,
-  NATIVE_LANGUAGES,
-  TARGET_LANGUAGES,
+  LANGUAGES,
 } from '../lib/tauri'
 import { comboFromEvent, SHORTCUT_DEFAULTS, type ShortcutAction } from '../lib/keyboard'
+import { t, tOr, uiLangFromNative, type UiLang } from '../lib/i18n'
 
 type KeyCheck = { state: 'idle' | 'checking' | 'valid' | 'invalid'; detail: string }
 
@@ -42,17 +42,22 @@ function ShortcutField({
   label,
   action,
   value,
+  ui,
   onChange,
 }: {
   label: string
   action: ShortcutAction
   value: string
+  ui: UiLang
   onChange: (v: string) => void
 }) {
   const [recording, setRecording] = useState(false)
+  // Shortcut labels localize via settings.sc.<action>; falls back to the
+  // English label when the key is missing.
+  const displayLabel = tOr(ui, 'settings.sc.' + action, label)
   return (
     <div className="shortcut-field">
-      <span className="shortcut-label">{label}</span>
+      <span className="shortcut-label">{displayLabel}</span>
       <input
         data-shortcut-capture={recording || undefined}
         className="shortcut-input"
@@ -78,41 +83,41 @@ function ShortcutField({
   )
 }
 
-const SECTIONS: { id: SectionId; label: string; icon: string; desc: string }[] = [
+const SECTIONS: { id: SectionId; labelKey: string; icon: string; descKey: string }[] = [
   {
     id: 'keys',
-    label: 'API Keys',
+    labelKey: 'settings.section.keys',
     icon: '🔑',
-    desc: 'Provider credentials. Stored locally, sent only to the provider, never shown after saving.',
+    descKey: 'settings.desc.keys',
   },
   {
     id: 'models',
-    label: 'Models',
+    labelKey: 'settings.section.models',
     icon: '🧠',
-    desc: 'Which models power the tutor/analysis workers and the reasoning observer.',
+    descKey: 'settings.desc.models',
   },
   {
     id: 'languages',
-    label: 'Languages',
+    labelKey: 'settings.section.languages',
     icon: '🌐',
-    desc: "What you're learning and what you already speak.",
+    descKey: 'settings.desc.languages',
   },
   {
     id: 'voice',
-    label: 'Audio & Voice',
+    labelKey: 'settings.section.voice',
     icon: '🎙',
-    desc: 'Microphone, speech playback, and transcription behavior.',
+    descKey: 'settings.desc.voice',
   },
   {
     id: 'shortcuts',
-    label: 'Shortcuts',
+    labelKey: 'settings.section.shortcuts',
     icon: '⌨',
-    desc: 'Click a field and press the combo. Esc resets to default.',
+    descKey: 'settings.desc.shortcuts',
   },
 ]
 
-const SECTION_LABEL: Record<SectionId, string> = Object.fromEntries(
-  SECTIONS.map((s) => [s.id, s.label])
+const SECTION_LABEL_KEY: Record<SectionId, string> = Object.fromEntries(
+  SECTIONS.map((s) => [s.id, s.labelKey])
 ) as Record<SectionId, string>
 
 interface RowDef {
@@ -157,6 +162,8 @@ export function SettingsModal({
   const [groqCheck, setGroqCheck] = useState<KeyCheck>({ state: 'idle', detail: '' })
   const [section, setSection] = useState<SectionId>('keys')
   const [search, setSearch] = useState('')
+  // The app's UI language follows the learner's NATIVE language.
+  const ui = uiLangFromNative(settings?.native_language)
 
   useEffect(() => {
     logInfo('[settings] modal opened')
@@ -260,11 +267,16 @@ export function SettingsModal({
   const setShortcuts = (patch: Partial<Shortcuts>) =>
     setSettings({ ...settings, shortcuts: { ...settings.shortcuts, ...patch } })
 
+  // Localized display label for a registry row (English label = search index).
+  const L = (id: string, fallback: string) => tOr(ui, 'settings.row.' + id, fallback)
+
   // ── Row registry: adding a setting = one entry here ──────────────────────
+  // Display labels localize via the settings.row.<id> convention (English
+  // fallbacks double as the search index).
   const rows: Record<string, RowDef> = {
     openrouter_key: {
       section: 'keys',
-      label: 'OpenRouter API key',
+      label: L('openrouter_key', 'OpenRouter API key'),
       kw: 'openrouter api key credential token chat tutor',
       node: (
         <div className="form-row">
@@ -283,7 +295,7 @@ export function SettingsModal({
     },
     groq_key: {
       section: 'keys',
-      label: 'Groq API key',
+      label: L('groq_key', 'Groq API key (speech-to-text)'),
       kw: 'groq api key credential speech transcription stt whisper voice',
       node: (
         <div className="form-row">
@@ -302,7 +314,7 @@ export function SettingsModal({
     },
     worker_model: {
       section: 'models',
-      label: 'Worker model (tutor · analysis · coach)',
+      label: L('worker_model', 'Worker model (tutor · analysis · coach)'),
       kw: 'worker model llm gemini openai deepseek tutor analysis speed',
       node: (
         <div className="form-row">
@@ -316,7 +328,7 @@ export function SettingsModal({
     },
     observer_model: {
       section: 'models',
-      label: 'Observer model (reasoning · planning)',
+      label: L('observer_model', 'Observer model (reasoning · planning)'),
       kw: 'observer model reasoning planning coach agent',
       node: (
         <div className="form-row">
@@ -333,7 +345,7 @@ export function SettingsModal({
     },
     target_language: {
       section: 'languages',
-      label: 'I want to learn',
+      label: L('target_language', 'I want to learn'),
       kw: 'target language learn spanish studying',
       node: (
         <div className="form-row">
@@ -342,9 +354,9 @@ export function SettingsModal({
             value={settings.target_language}
             onChange={(e) => setSettings({ ...settings, target_language: e.target.value })}
           >
-            {TARGET_LANGUAGES.map(([code, name]) => (
-              <option key={code} value={code}>
-                {name}
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.name}
               </option>
             ))}
           </select>
@@ -353,7 +365,7 @@ export function SettingsModal({
     },
     native_language: {
       section: 'languages',
-      label: 'My native language',
+      label: L('native_language', 'My native language'),
       kw: 'native language explanations mother tongue',
       node: (
         <div className="form-row">
@@ -362,9 +374,9 @@ export function SettingsModal({
             value={settings.native_language}
             onChange={(e) => setSettings({ ...settings, native_language: e.target.value })}
           >
-            {NATIVE_LANGUAGES.map(([code, name]) => (
-              <option key={code} value={code}>
-                {name}
+            {LANGUAGES.map((l) => (
+              <option key={l.base} value={l.base}>
+                {l.name}
               </option>
             ))}
           </select>
@@ -373,7 +385,7 @@ export function SettingsModal({
     },
     microphone: {
       section: 'voice',
-      label: 'Microphone',
+      label: L('microphone', 'Microphone'),
       kw: 'microphone input device recording yeti',
       node: (
         <div className="form-row">
@@ -404,7 +416,7 @@ export function SettingsModal({
     },
     tts_engine: {
       section: 'voice',
-      label: 'Speech engine',
+      label: L('tts_engine', 'Speech engine'),
       kw: 'tts engine speech synthesis groq playai cloud voice os offline playback',
       node: (
         <div className="form-row">
@@ -421,7 +433,7 @@ export function SettingsModal({
     },
     tts_voice: {
       section: 'voice',
-      label: 'Cloud voice',
+      label: L('tts_voice', 'Cloud voice'),
       kw: 'cloud voice actor narrator openai alloy nova',
       node: (
         <div className="form-row">
@@ -441,7 +453,7 @@ export function SettingsModal({
     },
     auto_speak: {
       section: 'voice',
-      label: 'Auto-speak tutor replies',
+      label: L('auto_speak', 'Auto-speak tutor replies'),
       kw: 'auto speak tts voice speech playback audio read aloud',
       node: (
         <div className="form-row check-row">
@@ -458,7 +470,7 @@ export function SettingsModal({
     },
     auto_send: {
       section: 'voice',
-      label: 'Auto-send transcriptions',
+      label: L('auto_send', 'Auto-send transcriptions'),
       kw: 'auto send transcription mic speech stt voice input',
       node: (
         <div className="form-row check-row">
@@ -481,9 +493,10 @@ export function SettingsModal({
       kw: `keyboard shortcut hotkey key combo ${sr.label}`,
       node: (
         <div className="form-row">
-          <ShortcutField
-            label={sr.label}
-            action={sr.action}
+        <ShortcutField
+          label={sr.label}
+          ui={ui}
+          action={sr.action}
             value={settings.shortcuts[sr.action]}
             onChange={(v) => setShortcuts({ [sr.action]: v })}
           />
@@ -535,18 +548,18 @@ export function SettingsModal({
                 }}
               >
                 <span className="nav-icon">{s.icon}</span>
-                {s.label}
+                {t(ui, s.labelKey)}
               </button>
             ))}
           </nav>
         </aside>
         <main className="settings-content">
           <div className="settings-head">
-            <h2>{searching ? `Search: “${search.trim()}”` : activeSection.label}</h2>
+            <h2>{searching ? `“${search.trim()}”` : t(ui, 'settings.title')}</h2>
             <p className="sub">
               {searching
-                ? `${visibleRows.length} match${visibleRows.length === 1 ? '' : 'es'}`
-                : activeSection.desc}
+                ? `${visibleRows.length} ${t(ui, 'settings.matches')}`
+                : t(ui, activeSection.descKey)}
             </p>
           </div>
           <div className="settings-scroll">
@@ -556,7 +569,9 @@ export function SettingsModal({
             {visibleRows.map(([id, row]) => (
               <div key={id} className="settings-entry">
                 {searching && (
-                  <p className="settings-group-k">{SECTION_LABEL[row.section]}</p>
+                  <p className="settings-group-k">
+                    {t(ui, SECTION_LABEL_KEY[row.section])}
+                  </p>
                 )}
                 {row.node}
               </div>

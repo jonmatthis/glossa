@@ -11,7 +11,7 @@ import type {
   TeachingPlan,
 } from '../types'
 import { GlossPopup, popupAnchor, type PopupState } from '../components/GlossPopup'
-import { getPlan, getSettings, isTauri, NATIVE_LANGUAGES, TARGET_LANGUAGES, transcribeAudio } from '../lib/tauri'
+import { getPlan, getSettings, isTauri, LANGUAGES, transcribeAudio } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
 import { loadVoices, speakSmart, speechSupported, stopSpeaking } from '../lib/speech'
 import { comboFromEvent } from '../lib/keyboard'
@@ -613,9 +613,8 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       setTtsReady(v.length > 0 || speechSupported())
       if (!v.length) logWarn('[tts] no OS voices found — speech disabled')
     })
-    // Greeting: once per module session (each greeting is a stack of calls).
-    // A fresh session also resets the coach thread — new conversation, new
-    // Cyrano memory.
+    // Greeting fires once per module session; a new session also clears the
+    // coach thread.
     if (isTauri && !sessionGreeted) {
       sessionGreeted = true
       logInfo('[guided] firing greeting turn')
@@ -1016,11 +1015,11 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
 
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
-    ? (TARGET_LANGUAGES.find(([c]) => c === settings.target_language)?.[1] ??
+    ? (LANGUAGES.find((l) => l.code === settings.target_language)?.name ??
        settings.target_language.split('-')[0].toUpperCase())
     : ''
   const nativeLanguageName = settings
-    ? (NATIVE_LANGUAGES.find(([c]) => c === settings.native_language)?.[1] ??
+    ? (LANGUAGES.find((l) => l.base === settings.native_language)?.name ??
        settings.native_language.toUpperCase())
     : ''
 

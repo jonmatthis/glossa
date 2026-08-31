@@ -34,16 +34,13 @@ export async function invoke<T>(
   }
 }
 
-export const TARGET_LANGUAGES: [string, string][] = [
-  ['en-US', 'English (US)'],
-  ['fr-FR', 'French'],
-  ['es-ES', 'Spanish (Spain)'],
-]
-
-export const NATIVE_LANGUAGES: [string, string][] = [
-  ['en', 'English'],
-  ['fr', 'French'],
-  ['es', 'Spanish'],
+/// Single language registry — every entry works as BOTH target and native.
+/// `code` is the BCP-47 value stored for target_language; `base` is the
+/// value stored for native_language (and the UI language, lib/i18n.ts).
+export const LANGUAGES: { code: string; base: string; name: string }[] = [
+  { code: 'en-US', base: 'en', name: 'English (US)' },
+  { code: 'fr-FR', base: 'fr', name: 'Français' },
+  { code: 'es-ES', base: 'es', name: 'Español' },
 ]
 
 export function getSettings(): Promise<Settings> {
