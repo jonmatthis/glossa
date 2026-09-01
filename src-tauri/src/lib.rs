@@ -2,10 +2,14 @@ pub mod ai;
 #[cfg(test)]
 mod bench;
 pub mod commands;
-mod languages;
-mod observer;
+pub mod graph;
+pub mod languages;
+pub mod observer;
+pub mod ontology;
 pub mod prompts;
 mod settings;
+pub mod turn_plan;
+pub mod trace;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -63,6 +67,9 @@ pub fn run() {
                 plan.session_focus,
                 profile.about.len(),
             );
+            // Attach the trace bus: every AI run is recorded regardless, but
+            // this is what lets the webview watch them live.
+            trace::attach(app.handle().clone());
             let coach_thread = commands::init_coach_thread(&config_dir);
             log::info!("coach thread loaded: {} messages", coach_thread.len());
             app.manage(AppState {
@@ -80,6 +87,12 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::validate_key,
+            commands::get_languages,
+            commands::open_dev_window,
+            commands::get_graph,
+            commands::get_reconciliation,
+            commands::get_runs,
+            commands::clear_runs,
             commands::get_diagnostics,
             commands::speak_text,
             commands::generate_scaffolds,

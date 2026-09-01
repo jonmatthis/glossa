@@ -1,5 +1,14 @@
 import { logDebug, logError, logInfo, logWarn } from './log'
-import type { Level, ObserverDocuments, Settings, Story } from '../types'
+import type {
+  Graph,
+  Level,
+  ObserverDocuments,
+  Reconciliation,
+  Run,
+  RunStarted,
+  Settings,
+  Story,
+} from '../types'
 
 export const isTauri =
   typeof window !== 'undefined' &&
@@ -34,64 +43,46 @@ export async function invoke<T>(
   }
 }
 
-/// Single language registry — every entry works as BOTH target and native.
-/// `code` is the BCP-47 value stored for target_language; `base` is the
-/// value stored for native_language (and the UI language, lib/i18n.ts).
-/// `dialects` are regional variants (first = default); `direction` and
-/// `romanization` follow the target script (RTL + ALA-LC for Arabic).
-export const LANGUAGES: {
+/// The language registry lives in Rust (`languages.rs`) and is fetched once
+/// at startup. There is no copy of it here — a second table is exactly how
+/// the dialect lists drifted apart before.
+export interface DialectInfo {
+  id: string
+  label: string
+}
+
+export interface LanguageInfo {
   code: string
   base: string
   name: string
+  endonym: string
   direction: 'ltr' | 'rtl'
   romanization: string | null
-  dialects: { id: string; label: string }[]
-}[] = [
-  {
-    code: 'en-US',
-    base: 'en',
-    name: 'English (US)',
-    direction: 'ltr',
-    romanization: null,
-    dialects: [{ id: 'en-US', label: 'Standard American' }],
-  },
-  {
-    code: 'fr-FR',
-    base: 'fr',
-    name: 'Français',
-    direction: 'ltr',
-    romanization: null,
-    dialects: [
-      { id: 'fr-FR', label: 'France (standard)' },
-      { id: 'fr-CA', label: 'Québécois' },
-    ],
-  },
-  {
-    code: 'es-ES',
-    base: 'es',
-    name: 'Español',
-    direction: 'ltr',
-    romanization: null,
-    dialects: [
-      { id: 'es-ES', label: 'España (peninsular)' },
-      { id: 'es-MX', label: 'Mexicano' },
-      { id: 'es-CO', label: 'Centroamericano' },
-      { id: 'es-AR', label: 'Rioplatense' },
-    ],
-  },
-  {
-    code: 'ar',
-    base: 'ar',
-    name: 'Arabic',
-    direction: 'rtl',
-    romanization: 'ALA-LC',
-    dialects: [
-      { id: 'ar-LE', label: 'Levantine' },
-      { id: 'ar-EG', label: 'Egyptian' },
-      { id: 'ar-MSA', label: 'Modern Standard' },
-    ],
-  },
-]
+  dialects: DialectInfo[]
+}
+
+let registry: LanguageInfo[] | null = null
+
+/// Load the registry before the first render. Fails loudly — the UI cannot
+/// render a language picker it does not have.
+export async function loadLanguages(): Promise<void> {
+  registry = await invoke<LanguageInfo[]>('get_languages')
+  logInfo(`[lang] registry loaded: ${registry.map((l) => l.code).join(', ')}`)
+}
+
+/// The registry. Throws if called before `loadLanguages()` has resolved.
+export function languages(): LanguageInfo[] {
+  if (registry === null) {
+    throw new Error('language registry not loaded - loadLanguages() must run before render')
+  }
+  return registry
+}
+
+/// The registry entry for a target-language code, or null if unknown.
+export function languageFor(code: string): LanguageInfo | null {
+  const base = code.split('-')[0]
+  return languages().find((l) => l.code === code || l.base === base) ?? null
+}
 
 export function getSettings(): Promise<Settings> {
   return invoke<Settings>('get_settings')
@@ -111,6 +102,52 @@ export function validateKey(
 
 export function getDiagnostics(): Promise<[string, number][]> {
   return invoke('get_diagnostics')
+}
+
+/// Pop the observability panel into its own OS window. Desktop only —
+/// the window is built in Rust, so the webview never needs window-creation
+/// permission.
+export function openDevWindow(): Promise<void> {
+  return invoke('open_dev_window')
+}
+
+/// The execution graph as Rust declares it. The UI renders this and only
+/// this — a hand-drawn diagram would drift from the code within a week.
+export function getGraph(): Promise<Graph[]> {
+  return invoke('get_graph')
+}
+
+/// The declared graph diffed against what actually ran.
+export function getReconciliation(): Promise<Reconciliation> {
+  return invoke('get_reconciliation')
+}
+
+/// Every AI run still in memory, oldest first.
+export function getRuns(): Promise<Run[]> {
+  return invoke('get_runs')
+}
+
+export function clearRuns(): Promise<void> {
+  return invoke('clear_runs')
+}
+
+/// Operation starts. Subscribe alongside `subscribeRuns` to know what is
+/// working *now* rather than what has already finished.
+export async function subscribeRunStarts(
+  onStart: (run: RunStarted) => void
+): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<RunStarted>('trace:run_started', (e) => onStart(e.payload))
+}
+
+/// The trace bus. Every agent execution lands here the moment it finishes,
+/// from ANY command — not just guided_turn, which is the only one with a
+/// per-turn channel. Returns an unsubscribe function.
+export async function subscribeRuns(
+  onRun: (run: Run) => void
+): Promise<() => void> {
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<Run>('trace:run', (event) => onRun(event.payload))
 }
 
 export function saveSettings(settings: Settings): Promise<void> {

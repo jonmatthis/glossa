@@ -1,8 +1,10 @@
 //! OpenAI-compatible AI client (OpenRouter / Groq) with streaming, JSON
 //! schema-constrained structured output, and the failure-mode handling we
 //! learned the hard way in FreeLingo: inline $defs for grammar-constrained
-//! decoders, prompted-JSON fallback for providers that reject schemas, and
-//! validation retries with error feedback.
+//! decoders, and validation retries with error feedback. There is NO
+//! degraded fallback path: schema-constrained decoding is applied on every
+//! attempt, and a provider that cannot serve the call fails loudly with its
+//! own error so the model gets replaced rather than papered over.
 
 use futures_util::StreamExt;
 use schemars::JsonSchema;
@@ -11,6 +13,8 @@ use log::{debug, error, info, warn};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+use crate::trace::{AttemptKind, RunContext, RunRecorder, Usage};
 
 /// Session counters for RETRIES of transient, expected failures (429s,
 /// malformed model output fed back for correction). These are NOT fallbacks:
@@ -25,6 +29,18 @@ pub fn retry_stats_snapshot() -> [(&'static str, u64); 4] {
     ]
 }
 
+/// Output caps. These are **runaway guards**, not design constraints — the
+/// only thing they protect against is a degenerate model burning tokens
+/// forever (`frequency_penalty` is the other guard). They are deliberately
+/// generous: a cap tight enough to truncate normal work turns a working call
+/// into an unrecoverable failure, which is exactly what a 6000-token cap did
+/// to `tokenize_learner` on a long learner message.
+///
+/// Reply length is governed by the prompt, not by this number.
+const REPLY_MAX_TOKENS: u64 = 2_000;
+const WORKER_MAX_TOKENS: u64 = 32_000;
+const REASONING_MAX_TOKENS: u64 = 32_000;
+
 pub static PARSE_RETRY: AtomicU64 = AtomicU64::new(0);
 pub static VALIDATION_RETRY: AtomicU64 = AtomicU64::new(0);
 pub static HTTP_429_RETRY: AtomicU64 = AtomicU64::new(0);
@@ -36,9 +52,43 @@ pub struct Provider {
     pub model: String,
 }
 
-/// Dereference `$ref` so grammar-constrained decoders see it all. Accept
-/// both `definitions` (schemars 0.8) and `$defs` — unresolved refs 400 on
-/// several providers (Gemini).
+/// Keywords outside the structured-output subset. Present in schemars output,
+/// unsupported by the decoders, and — in the numeric case — actively harmful.
+const UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "default",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+];
+
+/// Normalize a schemars schema into something every grammar-constrained
+/// decoder can actually compile.
+///
+/// Three transformations, all learned the hard way:
+///
+/// 1. **Dereference `$ref`** — unresolved refs 400 on several providers.
+///    Accepts both `definitions` (schemars 0.8) and `$defs`.
+/// 2. **Collapse single-element `allOf` / `anyOf` / `oneOf`.** schemars wraps
+///    a `$ref` in `allOf` whenever the field also carries a doc comment, so a
+///    nested struct arrives as `{"allOf": [{...}], "description": "..."}`.
+///    Providers that cannot map `allOf` to their grammar silently degrade
+///    from "constrained decoding" to "strong hint" — and the model then
+///    returns the nested object as a JSON *string*. That is what broke the
+///    observer: `invalid type: string "{...}", expected struct TeachingPlan`.
+///    Collapsing the wrapper is what keeps the schema enforceable.
+/// 3. **Strip keywords constrained decoders do not support.** schemars emits
+///    `default`, `format`, and `minimum`/`maximum` — none of which are in
+///    the OpenAI-compatible structured-output subset. Worse, a `u32` field
+///    arrives as `{"type": "integer", "format": "uint32", "minimum": 0.0}`:
+///    a FLOAT bound on an integer. A grammar compiler given that can admit
+///    unbounded digit emission, which is the runaway signature the bench
+///    caught — the observer blowing a 32k token cap after two minutes, on
+///    roughly one run in three, non-deterministically. Stripping them leaves
+///    the shape (types, properties, required, items, enums, descriptions):
+///    everything that constrains, nothing that confuses.
 pub fn inline_defs(mut schema: Value) -> Value {
     let defs = schema
         .get("$defs")
@@ -66,8 +116,27 @@ pub fn inline_defs(mut schema: Value) -> Value {
                 }
                 map.remove("$defs");
                 map.remove("definitions");
+                for noise in UNSUPPORTED_KEYWORDS {
+                    map.remove(*noise);
+                }
                 for (_, value) in map.iter_mut() {
                     walk(value, defs);
+                }
+                // Collapse a single-branch combinator into its parent, keeping
+                // any sibling keys (description, default) the wrapper carried.
+                for key in ["allOf", "anyOf", "oneOf"] {
+                    let single = map
+                        .get(key)
+                        .and_then(|v| v.as_array())
+                        .filter(|a| a.len() == 1)
+                        .and_then(|a| a[0].as_object())
+                        .cloned();
+                    if let Some(inner) = single {
+                        map.remove(key);
+                        for (k, v) in inner {
+                            map.entry(k).or_insert(v);
+                        }
+                    }
                 }
             }
             Value::Array(items) => {
@@ -159,10 +228,14 @@ impl Provider {
     /// and returning the complete concatenated reply.
     pub async fn chat_streaming(
         &self,
+        ctx: RunContext,
         messages: &[Value],
         temperature: f64,
         on_delta: &mut (dyn FnMut(&str) + Send),
     ) -> Result<String, String> {
+        let mut run = RunRecorder::start(ctx, &self.model);
+        run.profile(Some(temperature), false, Some(REPLY_MAX_TOKENS), true, None);
+        run.set_prompt(messages);
         // Reasoning models (GLM etc.) burn seconds "thinking" before the first
         // token — disable it for conversational replies. If a model rejects
         // the request, we FAIL LOUDLY: that model cannot serve this call and
@@ -172,7 +245,9 @@ impl Provider {
             "messages": messages,
             "temperature": temperature,
             "stream": true,
-            "max_tokens": 600,
+            // Length is governed by the PROMPT ("one to three short
+            // sentences"); this is only a runaway guard.
+            "max_tokens": REPLY_MAX_TOKENS,
             "reasoning": reasoning_off(&self.model),
             // Route ONLY to providers that actually honor request parameters
             // (json_schema, reasoning, ...). Without this, OpenRouter
@@ -199,19 +274,41 @@ impl Provider {
             .map_err(|e| {
                 warn!("[ai] streaming request failed: {e}");
                 format!("request failed: {e}")
-            })?;
+            });
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                run.attempt(AttemptKind::Failed, Some(e.clone()), None);
+                run.finish_failed(&e);
+                return Err(e);
+            }
+        };
         let response = if response.status().as_u16() == 429 {
             // Rate limiting is a transient, expected failure: retry once.
             HTTP_429_RETRY.fetch_add(1, Ordering::Relaxed);
             warn!("[ai] 429 - backing off 3s and retrying once");
+            run.attempt(
+                AttemptKind::RateLimited,
+                Some("provider rate limit (429)".into()),
+                None,
+            );
             tokio::time::sleep(Duration::from_secs(3)).await;
-            self.client()
+            match self
+                .client()
                 .post(&url)
                 .bearer_auth(&self.api_key)
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| format!("request failed after 429 backoff: {e}"))?
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = format!("request failed after 429 backoff: {e}");
+                    run.attempt(AttemptKind::Failed, Some(msg.clone()), None);
+                    run.finish_failed(&msg);
+                    return Err(msg);
+                }
+            }
         } else {
             response
         };
@@ -223,15 +320,37 @@ impl Provider {
             // wrong (e.g. model refuses reasoning:false). No fallback: fix
             // the cause — change the model or the request.
             error!("[ai] streaming request REJECTED: {status} {}", truncate_for_log(&body, 800));
-            return Err(format!("API error {status}: {}", truncate_for_log(&body, 800)));
+            let msg = format!("API error {status}: {}", truncate_for_log(&body, 800));
+            run.attempt(AttemptKind::Failed, Some(msg.clone()), None);
+            run.finish_failed(&msg);
+            return Err(msg);
         }
 
-        Self::consume_stream(response, on_delta).await
+        let result = Self::consume_stream(response, on_delta, &mut run).await;
+        match result {
+            Ok(full) => {
+                run.set_output(&full);
+                run.attempt(AttemptKind::Ok, None, None);
+                run.finish_ok();
+                Ok(full)
+            }
+            Err(e) => {
+                run.attempt(AttemptKind::Failed, Some(e.clone()), None);
+                run.finish_failed(&e);
+                Err(e)
+            }
+        }
     }
 
+    /// `run` gets time-to-first-token and, when the provider volunteers a
+    /// final usage chunk, token counts. We do NOT request usage via
+    /// `stream_options` — with `require_parameters: true` an unsupported
+    /// option would change provider routing, and a working reply path is
+    /// not worth a token count.
     async fn consume_stream(
         response: reqwest::Response,
         on_delta: &mut (dyn FnMut(&str) + Send),
+        run: &mut RunRecorder,
     ) -> Result<String, String> {
         let started = std::time::Instant::now();
         let mut stream = response.bytes_stream();
@@ -249,9 +368,11 @@ impl Provider {
                         return Ok(full);
                     }
                     if let Ok(value) = serde_json::from_str::<Value>(data) {
+                        run.set_usage(Usage::from_response(&value));
                         if let Some(delta) = value["choices"][0]["delta"]["content"].as_str() {
                             if !delta.is_empty() {
                                 debug!("[ai] delta: {delta:?}");
+                                run.mark_first_token();
                                 full.push_str(delta);
                                 on_delta(delta);
                             }
@@ -264,7 +385,14 @@ impl Provider {
         Ok(full)
     }
 
-    async fn post_chat(&self, payload: &Value) -> Result<(String, String), String> {
+    /// Returns the message content plus whatever usage the provider
+    /// reported. The raw body is deliberately not returned — nothing used
+    /// it, and holding response bodies around invites logging them.
+    async fn post_chat(
+        &self,
+        payload: &Value,
+        run: &mut RunRecorder,
+    ) -> Result<(String, Option<Usage>, bool), String> {
         let started = std::time::Instant::now();
         let url = format!("{}/chat/completions", self.base_url);
         let mut response = self
@@ -279,7 +407,12 @@ impl Provider {
         // lands together — back off once and retry.
         if response.status().as_u16() == 429 {
             HTTP_429_RETRY.fetch_add(1, Ordering::Relaxed);
-            warn!("[ai] FALLBACK: 429 - backing off 3s and retrying once");
+            warn!("[ai] 429 - backing off 3s and retrying once");
+            run.attempt(
+                AttemptKind::RateLimited,
+                Some("provider rate limit (429)".into()),
+                None,
+            );
             tokio::time::sleep(Duration::from_secs(3)).await;
             response = self
                 .client()
@@ -301,6 +434,7 @@ impl Provider {
             started.elapsed().as_secs_f32(),
             body.to_string().len()
         );
+        let usage = Usage::from_response(&body);
         if !status.is_success() {
             let detail = body["error"]
                 .as_str()
@@ -310,6 +444,10 @@ impl Provider {
             warn!("[ai] API error: {}", truncate_for_log(&detail, 500));
             return Err(format!("API error {status}: {detail}"));
         }
+        // `length` means the model was cut off mid-output. That is NOT a
+        // transient defect and a corrective retry cannot fix it — the retry
+        // re-sends a LONGER conversation and truncates at the same place.
+        let truncated = body["choices"][0]["finish_reason"].as_str() == Some("length");
         let content = body["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or("")
@@ -321,7 +459,7 @@ impl Provider {
             );
             return Err("API returned an empty response".into());
         }
-        Ok((content, body.to_string()))
+        Ok((content, usage, truncated))
     }
 
     /// Structured output. Design: the request is ALWAYS schema-constrained;
@@ -332,6 +470,7 @@ impl Provider {
     /// model, same category as a 429 retry.
     pub async fn structured_validated<T, F>(
         &self,
+        ctx: RunContext,
         messages: &[Value],
         temperature: f64,
         name: &str,
@@ -342,8 +481,22 @@ impl Provider {
         T: DeserializeOwned + JsonSchema,
         F: Fn(&T) -> Option<String>,
     {
-        let root = serde_json::to_value(schemars::schema_for!(T))
-            .map_err(|e| format!("schema generation failed: {e}"))?;
+        let mut run = RunRecorder::start(ctx, &self.model);
+        run.profile(
+            Some(temperature),
+            allow_reasoning,
+            Some(if allow_reasoning { REASONING_MAX_TOKENS } else { WORKER_MAX_TOKENS }),
+            false,
+            Some(name),
+        );
+        let root = match serde_json::to_value(schemars::schema_for!(T)) {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = format!("schema generation failed: {e}");
+                run.finish_failed(&msg);
+                return Err(msg);
+            }
+        };
         let schema = inline_defs(root);
 
         let mut attempts: Vec<Value> = messages.to_vec();
@@ -362,7 +515,7 @@ impl Provider {
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
-                    "max_tokens": 8000,
+                    "max_tokens": REASONING_MAX_TOKENS,
                                         "provider": {"require_parameters": true},
                     "response_format": {
                         "type": "json_schema",
@@ -370,14 +523,11 @@ impl Provider {
                     },
                 })
             } else {
-                // 6000: stories emit the whole text as per-word glossed JSON —
-                // a 200-word story is ~3000 output tokens; a tight cap forces
-                // truncation.
                 json!({
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
-                    "max_tokens": 6000,
+                    "max_tokens": WORKER_MAX_TOKENS,
                     "reasoning": reasoning_off(&self.model),
                     "provider": {"require_parameters": true},
                     "response_format": {
@@ -387,6 +537,10 @@ impl Provider {
                 })
             };
             apply_dialect(&self.model, &mut payload);
+            // Re-recorded per attempt: a corrective retry sends a LONGER
+            // conversation, and the stored prompt should be the one that
+            // actually produced the stored output.
+            run.set_prompt(&attempts);
             info!(
                 "[ai] structured attempt {attempt} ({name}): messages={}",
                 attempts.len()
@@ -394,7 +548,29 @@ impl Provider {
 
             // Request-level failure (auth, schema rejection, bad model):
             // FAIL LOUDLY with the provider's actual error. No fallback.
-            let (raw, _raw_body) = self.post_chat(&payload).await?;
+            let (raw, usage, truncated) = match self.post_chat(&payload, &mut run).await {
+                Ok(v) => v,
+                Err(e) => {
+                    run.attempt(AttemptKind::Failed, Some(e.clone()), None);
+                    run.finish_failed(&e);
+                    return Err(e);
+                }
+            };
+            run.set_usage(usage.clone());
+            run.set_output(&raw);
+
+            // Fail fast on truncation. Retrying costs another full call and
+            // truncates identically — the observed failure was 3 attempts,
+            // 64s and ~18k tokens for an outcome that was never reachable.
+            if truncated {
+                let msg = format!(
+                    "model output hit the token cap ({name}) - raise max_tokens or                      shorten the input; retrying cannot help"
+                );
+                error!("[ai] {msg}");
+                run.attempt(AttemptKind::Failed, Some(msg.clone()), usage);
+                run.finish_failed(&msg);
+                return Err(msg);
+            }
             debug!("[ai] structured attempt {attempt} raw content: {}", truncate_for_log(&raw, 600));
 
             let cleaned = extract_json(&raw);
@@ -403,6 +579,11 @@ impl Provider {
                     if let Some(problem) = validate(&value) {
                         VALIDATION_RETRY.fetch_add(1, Ordering::Relaxed);
                         warn!("[ai] validation failed ({problem}) - corrective retry");
+                        run.attempt(
+                            AttemptKind::Invalid,
+                            Some(problem.clone()),
+                            usage.clone(),
+                        );
                         last_error = problem;
                         attempts.push(json!({"role": "assistant", "content": raw}));
                         attempts.push(json!({
@@ -416,11 +597,18 @@ impl Provider {
                         continue;
                     }
                     info!("[ai] structured attempt {attempt} OK");
+                    run.attempt(AttemptKind::Ok, None, usage);
+                    run.finish_ok();
                     return Ok(value);
                 }
                 Err(e) => {
                     PARSE_RETRY.fetch_add(1, Ordering::Relaxed);
                     warn!("[ai] parse failed ({e}) - corrective retry");
+                    run.attempt(
+                        AttemptKind::Unparseable,
+                        Some(format!("invalid JSON: {e}")),
+                        usage.clone(),
+                    );
                     warn!(
                         "[ai] raw response was: {}",
                         truncate_for_log(&raw, 600)
@@ -441,7 +629,9 @@ impl Provider {
         error!(
             "[ai] structured output ({name}) failed after all attempts: {last_error}"
         );
-        Err(format!("structured output failed after retries: {last_error}"))
+        let msg = format!("structured output failed after retries: {last_error}");
+        run.finish_failed(&msg);
+        Err(msg)
     }
 }
 
@@ -492,6 +682,73 @@ fn inline_defs_resolves_transitive_refs() {
     });
     let out = inline_defs(schema);
     assert_eq!(out["properties"]["x"]["type"], "string");
+}
+
+#[test]
+fn inline_defs_collapses_the_allof_wrapper_schemars_adds_to_documented_fields() {
+    // The observer's `plan` field arrived as {"allOf": [{...}]} because it
+    // carries a doc comment. Providers that cannot compile `allOf` degrade
+    // to a hint and return the nested object as a STRING.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "plan": {
+                "description": "The rewritten plan.",
+                "allOf": [{"$ref": "#/definitions/Plan"}]
+            }
+        },
+        "definitions": {
+            "Plan": {"type": "object", "properties": {"focus": {"type": "string"}}}
+        }
+    });
+    let out = inline_defs(schema);
+    let plan = &out["properties"]["plan"];
+    assert!(plan.get("allOf").is_none(), "allOf wrapper survived: {plan}");
+    assert_eq!(plan["type"], "object");
+    assert_eq!(plan["properties"]["focus"]["type"], "string");
+    // Sibling keys on the wrapper are preserved.
+    assert_eq!(plan["description"], "The rewritten plan.");
+}
+
+#[test]
+fn inline_defs_strips_keywords_that_make_decoders_run_away() {
+    // A u32 arrives as an integer with a FLOAT minimum. Left in, a grammar
+    // compiler can admit unbounded digits — the observer's 32k-token runaway.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "budget": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0.0,
+                "default": 1,
+                "description": "kept"
+            }
+        },
+        "required": ["budget"]
+    });
+    let out = inline_defs(schema);
+    let b = &out["properties"]["budget"];
+    for gone in ["format", "minimum", "default"] {
+        assert!(b.get(gone).is_none(), "{gone} survived: {b}");
+    }
+    // The shape that actually constrains must survive untouched.
+    assert_eq!(b["type"], "integer");
+    assert_eq!(b["description"], "kept");
+    assert_eq!(out["required"][0], "budget");
+}
+
+#[test]
+fn inline_defs_keeps_multi_branch_combinators_alone() {
+    // Only SINGLE-branch wrappers are noise; a real union must survive.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "v": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+        }
+    });
+    let out = inline_defs(schema);
+    assert_eq!(out["properties"]["v"]["anyOf"].as_array().unwrap().len(), 2);
 }
 
 #[test]

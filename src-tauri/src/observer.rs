@@ -5,7 +5,7 @@
 //! steer the conversation.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::path::Path;
 
 use crate::ai::Provider;
@@ -233,76 +233,138 @@ pub fn directives_block(plan: &TeachingPlan, recent_mechanics: &[String]) -> Str
     lines.join("\n")
 }
 
-pub fn observer_system_prompt(target_language_name: &str) -> String {
-    format!(
-        "You are the teaching coordinator for an immersive {tln} tutoring session.\n\
-         You NEVER talk to the learner. Your only job: keep two small documents\n\
-         accurate and useful so the fast tutor-workers can teach better.\n\n\
-         You will receive: the conversation transcript, the current Teaching Plan,\n\
-         the learner Profile, and the grammar cards recently taught.\n\n\
-         Rewrite BOTH documents based on the latest evidence:\n\
-         - TeachingPlan: what to practice next (1-3 items max), the recurring-error\n\
-           recast queue (with seen counts), vocabulary worth recycling, what to avoid\n\
-           (overload guard), learner interests worth asking about, a one-phrase energy\n\
-           read, the correction budget (1-2), and the taught-ledger (mechanics already\n\
-           covered — workers must not re-teach them).\n\
-         - Profile: durable facts that persist across sessions — a 2-3 sentence 'about',\n\
-           level notes with evidence, strengths, weaknesses, durable interests, and the\n\
-           long-term error history.\n\n\
-         Rules:\n\
-         - ADVISORY ONLY: workers steer gently. Your documents must keep the\n\
-           conversation natural — never lecture-y, never a lesson plan.\n\
-         - Be concrete: cite actual words the learner actually said, not generic advice.\n\
-         - Keep it SMALL: these documents are injected into fast worker prompts.\n\
-         - Full replacement: emit the complete documents, not diffs.\n\
-         - The learner can see these documents. Write them respectfully and usefully.",
-        tln = target_language_name,
-    )
-}
-
-pub fn observer_user_message(
+/// The observer runs as **two separate structured calls**, one per document.
+///
+/// It used to be one call returning `{plan, profile}` — two levels of nesting,
+/// each containing arrays of objects. The bench showed that shape is not
+/// reliably servable: providers either returned the nested document as a JSON
+/// *string*, or ran away generating until they blew the token cap (123s on
+/// gemini-2.5-flash, 73s on gemini-3.1-flash-lite, and non-deterministically
+/// so — the same model and prompt succeeded in 2.1s on another run).
+///
+/// A schema this app depends on must be boring to serve. Two flat documents
+/// are; one nested wrapper is not. They also now run concurrently, so the
+/// split costs nothing in wall time.
+fn shared_context(
     transcript: &str,
     plan: &TeachingPlan,
     profile: &Profile,
     recent_mechanics: &[String],
-) -> Value {
-    json!({
-        "role": "user",
-        "content": format!(
-            "CONVERSATION TRANSCRIPT:\n{transcript}\n\n\
-             RECENTLY TAUGHT (do not re-teach): {mechanics}\n\n\
-             CURRENT TEACHING PLAN:\n{plan}\n\n\
-             CURRENT PROFILE:\n{profile}\n\n\
-             Rewrite both documents now.",
-            transcript = transcript,
-            mechanics = if recent_mechanics.is_empty() { "(none)".to_string() } else { recent_mechanics.join("; ") },
-            plan = serde_json::to_string_pretty(plan).unwrap_or_default(),
-            profile = serde_json::to_string_pretty(profile).unwrap_or_default(),
-        )
-    })
+) -> String {
+    format!(
+        "CONVERSATION TRANSCRIPT:
+{transcript}
+
+         RECENTLY TAUGHT (do not re-teach): {mechanics}
+
+         CURRENT TEACHING PLAN:
+{plan}
+
+         CURRENT PROFILE:
+{profile}",
+        transcript = transcript,
+        mechanics = if recent_mechanics.is_empty() {
+            "(none)".to_string()
+        } else {
+            recent_mechanics.join("; ")
+        },
+        plan = serde_json::to_string_pretty(plan).unwrap_or_default(),
+        profile = serde_json::to_string_pretty(profile).unwrap_or_default(),
+    )
 }
 
-/// Run one observer pass (reasoning model — this is where thinking earns its keep).
+fn observer_role(target_language_name: &str) -> String {
+    format!(
+        "You are the teaching coordinator for an immersive {tln} tutoring session.
+         You NEVER talk to the learner. Your job is to keep one small document
+         accurate so the fast tutor-workers can teach better.
+
+         Rules:
+         - ADVISORY ONLY: workers steer gently. Keep the conversation natural —
+           never lecture-y, never a lesson plan.
+         - Be concrete: cite actual words the learner said, not generic advice.
+         - Keep it SMALL: this is injected into fast worker prompts.
+         - Full replacement: emit the complete document, not diffs.
+         - The learner can see it. Write it respectfully and usefully.",
+        tln = target_language_name,
+    )
+}
+
+pub fn plan_system_prompt(target_language_name: &str) -> String {
+    format!(
+        "{role}
+
+         Rewrite the TEACHING PLAN from the latest evidence: what to practice next
+         (1-3 items max), the recurring-error recast queue (with seen counts),
+         vocabulary worth recycling, what to avoid (overload guard), learner
+         interests worth asking about, a one-phrase energy read, the correction
+         budget (1-2), and the taught-ledger (mechanics already covered — workers
+         must not re-teach them).",
+        role = observer_role(target_language_name),
+    )
+}
+
+pub fn profile_system_prompt(target_language_name: &str) -> String {
+    format!(
+        "{role}
+
+         Rewrite the learner PROFILE — durable facts that persist across sessions:
+         a 2-3 sentence 'about', level notes with evidence, strengths, weaknesses,
+         durable interests, and the long-term error history.",
+        role = observer_role(target_language_name),
+    )
+}
+
+/// Run one observer pass: both documents, concurrently, each on its own flat
+/// schema. A failure in one does not cost the other.
 pub async fn run_observer(
     provider: &Provider,
+    ctx: crate::trace::RunContext,
     target_language_name: &str,
     transcript: &str,
     plan: &TeachingPlan,
     profile: &Profile,
     recent_mechanics: &[String],
 ) -> Result<ObserverOutput, String> {
-    let messages = vec![
-        json!({"role": "system", "content": observer_system_prompt(target_language_name)}),
-        observer_user_message(transcript, plan, profile, recent_mechanics),
+    let context = shared_context(transcript, plan, profile, recent_mechanics);
+
+    let plan_msgs = vec![
+        json!({"role": "system", "content": plan_system_prompt(target_language_name)}),
+        json!({"role": "user", "content": format!("{context}
+
+Rewrite the teaching plan now.")}),
     ];
-    provider
-        .structured_validated::<ObserverOutput, _>(
-            &messages,
+    let profile_msgs = vec![
+        json!({"role": "system", "content": profile_system_prompt(target_language_name)}),
+        json!({"role": "user", "content": format!("{context}
+
+Rewrite the learner profile now.")}),
+    ];
+
+    // Reasoning OFF: summarising a short transcript into a small document is
+    // not a reasoning-hard task, and with it on the model burned 123s and blew
+    // the token cap thinking about it.
+    let (plan_out, profile_out) = tokio::join!(
+        provider.structured_validated::<TeachingPlan, _>(
+            ctx,
+            &plan_msgs,
             0.4,
-            "ObserverOutput",
-            true, // the observer is the reasoning model — let it think
-            |o| o.validate(),
-        )
-        .await
-        .map_err(|e| format!("observer failed: {e}"))
+            "TeachingPlan",
+            false,
+            |p: &TeachingPlan| p.validate(),
+        ),
+        provider.structured_validated::<Profile, _>(
+            ctx,
+            &profile_msgs,
+            0.4,
+            "Profile",
+            false,
+            |_: &Profile| None,
+        ),
+    );
+
+    Ok(ObserverOutput {
+        plan: plan_out.map_err(|e| format!("observer plan failed: {e}"))?,
+        profile: profile_out.map_err(|e| format!("observer profile failed: {e}"))?,
+    })
 }

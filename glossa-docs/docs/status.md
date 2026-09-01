@@ -5,21 +5,22 @@ title: Status
 
 # Status — where Glossa actually stands
 
-Honest inventory as of the v0.1.0 PoC audit (Aug 2026). Frame: **what works,
-what's rough, what doesn't exist.** Every claim is checkable against the code
-(`file:line` references included).
+Honest inventory, last reconciled against the code **2026-09-01**. Frame:
+**what works, what's rough, what doesn't exist.** Every claim is checkable
+against the code.
 
 ## Verdict in three sentences
 
 The core loop — greet → converse with a streamed tutor reply → async grammar
-analysis → observer quietly steering via plan/profile — is **implemented and
-coherent**, with unusually mature LLM-error handling for a PoC (schema
-inlining, prompted-JSON fallback, corrective retries, per-section
-degradation, non-overlapping observer). The app is **single-user,
-single-language, A2-only, desktop-only**, with no tests, no CI, no
-conversation persistence, and a handful of contract drifts between the Rust
-and TS types. Everything is currently **uncommitted** (single "Initial
-commit"; the whole app tree is untracked).
+analysis + private coaching → observer quietly steering via plan/profile —
+is **implemented and coherent**, with unusually mature LLM-error handling
+for a PoC (schema inlining, corrective retries, per-section degradation,
+non-overlapping observer, no silent fallback paths). The app is
+**single-user, single-pairing-at-a-time** across four symmetric languages,
+runs on Windows desktop and Android, and has unit tests plus a three-job CI
+workflow. What it still lacks: conversation persistence, onboarding, any
+vocabulary/SRS layer, iOS — and, most pressingly, any real observability
+into the eight model calls a single turn now makes.
 
 ## What works end-to-end
 
@@ -27,8 +28,8 @@ commit"; the whole app tree is untracked).
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
-| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar (any dialect), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language; **dialect = preset dropdown + free-text combobox** injected into every prompt; **Absolute zero level** (PRE-A1) with true-beginner survival mode | `languages.rs`, `commands.rs::save_settings`, `components/DialectField.tsx`, `prompts.rs::persona_block`, `GuidedPage` pair-change effect |
-| **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP), unvocalized typing convention; Whisper gets a target-language-only context hint (recent turns) because hint language leaks into transcripts; RTL token rendering via `row-reverse` lines (flex order overrides bidi) | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.rtl-line`/`.wroman` UI |
+| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar, any native language, registry served to the UI over IPC (`get_languages`); documents archived on switch; full conversation reset + fresh greeting in the new language; **dialect = preset dropdown + free-text combobox** injected into every prompt; **Absolute zero level** (PRE-A1) with true-beginner survival mode | `languages.rs`, `commands.rs::save_settings`, `components/DialectField.tsx`, `prompts.rs::persona_block`, `GuidedPage` pair-change effect |
+| **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP) — the scheme now comes from the language registry rather than hardcoded prompt text, and applies to learner tokens as well as tutor tokens; unvocalized typing convention; Whisper gets a target-language-only context hint (recent turns) because hint language leaks into transcripts; RTL token rendering via `row-reverse` lines (flex order overrides bidi) | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.rtl-line`/`.wroman` UI |
 | **Unified right panel** — Coach / Analysis tabs (one pane, both views); coach thread persists inside the Coach tab; analysis Q&A chat removed | `components/panes/CoachAnalysisPanel.tsx` |
 | **Mobile mode = window mode** — window below 860px switches to tabbed single-surface layout (bottom nav: Chat ⇄ Coach/Analysis); desktop shrinks into it for testing | `GuidedPage` matchMedia effect, `.mobile-nav` |
 | **Voice I/O** — cloud TTS playback via OpenRouter gpt-audio-mini (cached, OS-voice fallback), mic with 20s-silence auto-stop, **live scrolling waveform**, optional auto-send; 🔊 replay; configurable shortcuts | `commands.rs::speak_text`, `components/WaveformStrip.tsx`, `lib/speech.ts`, `lib/keyboard.ts` |
@@ -36,10 +37,15 @@ commit"; the whole app tree is untracked).
 | **Interactive coach thread** — persisted private side-chat with the coach; analysis Q&A input | `coach_ask`, `coach_thread.json`, Coach pane input |
 | Observer pass, non-overlapping, plan/profile persisted + learner-visible drawer | `commands.rs:262-351`, `observer.rs` |
 | Anti-repetition (taught ledger + 20-card ring) | `observer.rs::directives_block`, `commands.rs:483-496` |
-| Structured output fallback ladder | `ai.rs::structured_validated` |
+| Structured output: schema-constrained on every attempt, corrective retries, no degraded path | `ai.rs::structured_validated` |
 | Stories: generation, validation, tap-gloss, per-level cache | `commands.rs:558-619`, `StoriesPage.tsx` |
 | Voice input → Whisper STT → composer (not auto-send) | `GuidedPage.toggleMic`, `commands.rs::transcribe_audio` |
-| Assist dial 0–3 affecting render + prompts + scaffolds | `GuidedPage`, `prompts.rs::ASSIST_LEVEL_NAMES` |
+| Steer row (level → CEFR in every prompt, topic → directives) + per-token tap-to-reveal help | `hooks/useSteering.ts`, `commands.rs::guided_turn`, `chat/TurnView.tsx` |
+| **Run tracing** — every AI call produces one `Run` (operation, actor, turn lineage, model profile, timings, time-to-first-token, token usage, full attempt chain, outcome), streamed live on a trace bus | `ontology.rs`, `trace.rs`, `ai.rs` chokepoint, `components/RunsView.tsx` |
+| **Generated execution graph** — `turn_plan.rs` declares what a turn does and what each step actually depends on; `graph.rs` *generates* the picture from it. Structure derived, position authored. Live Graph view (lazy-loaded React Flow) lights nodes as runs land | `turn_plan.rs`, `graph.rs`, `commands.rs::get_graph`, `components/graph/AgentGraph.tsx` |
+| **Reconciliation** — the declared graph diffed against recorded runs: undeclared operations, unexercised nodes, and **contradicted edges** (a dependent that started before its dependency finished). Rendered as a fidelity banner and red edges | `trace::reconcile`, `commands.rs::get_reconciliation` |
+| **Window capture for UI review** — screenshots the real Tauri window rather than a mocked browser view | `scripts/shot.ps1` |
+| **Observability panel in three shells** — resizable desktop dock (persisted height), pop-out OS window (built in Rust, label-routed), and a third mobile swipe surface (chat ⇄ coach ⇄ inside), all sharing one `DevPanel` | `components/dev/DevPanel.tsx`, `LogsOverlay.tsx`, `DevWindow.tsx`, `commands.rs::open_dev_window` |
 | Logging across the IPC boundary (console + file + webview) | `lib.rs` log plugin, `lib/log.ts` |
 | Settings persistence incl. mic device selection | `settings.rs`, `SettingsModal.tsx` |
 
@@ -58,15 +64,21 @@ and greetings core. Fine-grained/adaptive leveling (driven by
 TS type now mirrors the Rust struct and the Settings modal exposes the
 observer model; saving no longer silently resets it.
 
-### R3 · Testing/CI — **improved, CI still missing**
-Unit tests now exist (6 Rust + 12 vitest covering the pure functions that
-bit us; model bench harness for LLM candidate evaluation). Still missing:
-CI pipeline (clippy + tsc + vitest + docs build), lint config.
+### R3 · Testing/CI — **green**
+Unit tests exist (8 Rust + 12 vitest covering the pure functions that bit
+us, plus an `#[ignore]`d model-bench harness for LLM candidate evaluation)
+and `.github/workflows/ci.yml` runs frontend / Rust / docs jobs. All three
+job commands pass as of 2026-09-01 (A1). Still missing: a lint config for
+the frontend, and any test above the pure-function layer.
 
-### R4 · Conversation history not persisted
+### R4 · Conversation history not persisted — **designed, folded into Observability**
 Turns live only in React state. Continuity across restarts is carried solely
-by plan/profile. A `session.json` (or SQLite) with the turn log is the
-missing piece for "resume where I left off" and for future SRS/analytics.
+by plan/profile. Resolved by design in
+[Observability](./observability#persistence): `session.json` for the turn log
+and `runs.jsonl` for the trace, in the app config dir (**not** the webview's
+`localStorage` — capacity, layer and durability all argue against it), with
+an obvious archive-don't-destroy reset control on the main surface. Persisting
+runs persists the conversation, so R4 and the trace store are one decision.
 
 ### R5 · README overstates key isolation — **FIXED**
 Keys no longer travel to the webview at all: `get_settings` returns masked
@@ -206,16 +218,19 @@ Full audit findings; worked chunk by chunk, this table is the tracker.
 
 ## What does not exist yet (explicitly)
 
-- Onboarding (level picker, first-run flow beyond Settings)
 - Any persistence of chat; any export
 - SRS / vocabulary layer
 - Cloud TTS: **shipped** (OpenRouter gpt-audio-mini, cached, OS fallback)
   (Web Speech API: 🔊 per bubble + auto-speak toggle); cloud quality upgrade
   is a fast-follow
-- Mobile scaffolds, CI pipelines, installers for mac/Linux (config targets
-  "all" but untested)
-- Localization of the UI itself (English-only chrome)
-- Tests, benches, telemetry (none, by design for now)
+- Installers for macOS/Linux (`bundle.targets: "all"` but never built or
+  tested); iOS scaffolding
+- Any test above the pure-function layer — no component tests, no IPC
+  round-trip tests, no prompt regression tests
+- UI chrome in Arabic — `lib/i18n.ts` localizes to en/fr/es only, so an
+  Arabic native speaker gets English chrome around an Arabic conversation
+- Onboarding (a first-run flow beyond the Settings modal)
+- Telemetry (none, by design)
 
 ## Structural refactor (decomposition) — **PASS 1 SHIPPED**
 
@@ -280,12 +295,66 @@ Planned decomposition (do when touching these files next, not before):
 - After the split, sweep for cross-file duplication (normalizeDocs callers,
   score meters, popup anchoring) and collapse into `lib/`.
 
+## Audit 2026-09-01 — docs↔code reconciliation
+
+The prose docs had drifted badly behind a week of fast commits. Overview,
+Architecture, Ontology and the README were rewritten against the code; the
+findings that are **code** problems, not doc problems, are listed here.
+
+| ID | Finding | Severity | Status |
+|---|---|---|---|
+| A1 | **CI was red** — `cargo clippy --lib -- -D warnings` failed on three warnings. All three turned out to be symptoms rather than lint noise: the unused param was A2, and the never-read `direction`/`romanization`/`dialect_display` were dead precisely because the frontend duplicated the registry (A3). Fixed at the cause, not with `#[allow]`. `--all-targets` is clean too. | high | ✅ |
+| A2 | **The language overlay was injected twice into the reply prompt** — the template interpolated both `{overlay}` and `{directives}`, and `directives` already begins with the overlay. `guided_reply_prompt` now takes `directives` only, the same single vehicle the mechanics and scaffolds prompts already used; the unused `target_language` param went with it. | med | ✅ |
+| A3 | **Dialect selection silently did nothing off the preset list** — worse than first logged. `overlay()` dropped any unrecognized dialect id, so the drifted TS-only `es-CO` *and* **every free-typed custom variety** produced an empty dialect line, while `DialectField` advertises "…or type a custom variety". Fixed in two places: `overlay()` passes unknown dialects through verbatim via `dialect_display`, and the frontend's duplicate table is gone — `get_languages` serves the Rust registry, awaited once in `main.tsx` before first render. **H1 fully closed.** | med | ✅ |
+| A4 | `Settings.prompt_overrides` is persisted but never read — no registry in `prompts.rs`, no UI. **Do not delete it** (reversing the initial call): it is the configuration surface for the agent workbench in [Observability](./observability), where agent id == prompt id. Build the registry in observability bite 2. | med | ⬜ → folded into Observability |
+| A5 | `src/types.ts::Settings` omits `prompt_overrides`. Harmless today (object spread carries the unknown key) but the type is a lie — the same class of drift as R2. | low | ⬜ |
+| A6 | Stale comments contradicting the code, in `ai.rs` (module doc advertising the removed prompted-JSON fallback; a 429 retry logged as `FALLBACK:`) and `settings.rs` (`tts_engine`/`tts_voice` still described as Groq PlayAI). | low | ✅ |
+| A7 | Tracked junk in git: empty `ES` (stray shell redirect), empty `src/bench.rs` (orphan — the real bench is `src-tauri/src/bench.rs`), and `scratch--mic-waveform-visualizer-extract/`. | low | ⬜ |
+| A8 | `Profile.sessions` still never increments (rendered in the Plan drawer as "0 sessions" forever). Carried over from R7. | low | ⬜ |
+| A9 | Docs site deploy config still placeholder: `url: https://github.com`, FreeMoCap footer/Discord links. Carried over from R14. | low | ⬜ |
+
+Doc-side corrections applied in the same pass (no code change needed):
+
+- The **assist dial (0–3) no longer exists** — it was the centerpiece of
+  Overview and Ontology and had been fully replaced by the steer row
+  (level + topic) plus per-token tap-to-reveal. Both pages rewritten.
+- Architecture claimed **six** IPC commands; there are **fourteen**. Table
+  rebuilt, plus the `coach_done` / `coach_failed` channel events.
+- Analysis is **five** parallel workers (the learner-tokens pass was
+  missing), and the coach is a fourth agent role.
+- Every line count in the module map was 2–3× low.
+- Ontology's Settings table was missing `target_dialect`, `always_romanize`
+  and `prompt_overrides`, listed `observer_model` twice, still carried the
+  removed `features` field, and was missing `user_tokens` /
+  `user_translation` / `errors` / `romanization`.
+- Ontology said 10 target languages and 9 natives; there are 4, symmetric.
+- README advertised a prompted-JSON fallback that the code explicitly
+  refuses to have.
+
 ## Suggested order of battle (small bites)
 
-1. **Commit the working tree.** Lowest-risk highest-value action today.
-2. R2 (TS contract fix) + R7 (remove or wire dead counters) — small hygiene.
-3. R1 (CEFR picker) — biggest pedagogical win, touches settings + prompts.
-4. R4 (persist conversation) — unlocks resume, export, analytics.
-5. R6 (namespace by language) — before language-switching becomes a feature.
-6. R5/R12/R13 (security pass) — before any distribution.
-7. R9 (mobile scaffolds) — after desktop stabilizes.
+1. ~~A1 / A2 / A3~~ — **done 2026-09-01.** CI green, reply-prompt overlay
+   de-duplicated, language registry single-sourced over IPC.
+2. **A4/A5/A7** — remaining hygiene: delete the dead `prompt_overrides`
+   field, fix the TS `Settings` type, untrack the junk files.
+3. ~~Observability bite 1~~ — **done 2026-09-01.** Agent registry, `Run`
+   record, trace bus, Runs tab. Every AI call now has an identity, a turn
+   lineage, timings, usage and a legible attempt chain.
+4. ~~Observability bite 1.5~~ — **done 2026-09-01.** Honest ontology (two
+   agents, not thirteen), the graph declared as data in `graph.rs`, and the
+   live Graph view (D2/D3).
+5. **[Observability](./observability) bite 2** — the prompt registry and
+   `PromptRecord` provenance. **Current focus**, and the prerequisite for
+   every learner-facing rung.
+6. **Observability bite 3 = R4** — `session.json` + `runs.jsonl` + the reset
+   control. Persisting runs persists the conversation, so these are one piece
+   of work, not two.
+7. **Observability bites 4–5** — the 💭 agent bubbles and the workbench. The
+   first learner-facing half of the design.
+8. **Coach bite 2** — coach corrections feed `plan.recurring_errors`
+   mechanically. Cheap, and it retires the observer's weakest duty.
+9. **Future Work bite 1** — the es-ES dictionary layer. Kills the biggest
+   latency and consistency problem in the product — and bite 1 above is what
+   will let us prove it actually did.
+10. **R12 (keys in the OS keychain)** — before any distribution.
+11. **iOS scaffolding** — after the STT mime fix (`platforms.md` §4).

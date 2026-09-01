@@ -70,10 +70,11 @@ pub struct Settings {
     /// Configurable keyboard shortcuts.
     #[serde(default)]
     pub shortcuts: Shortcuts,
-    /// Speech engine for playback: "groq" (cloud PlayAI) or "os" (Web Speech).
+    /// Speech engine for playback: "cloud" (OpenRouter gpt-audio-mini) or
+    /// "os" (Web Speech). Cloud failures fall back to the OS voice, loudly.
     #[serde(default = "default_tts_engine")]
     pub tts_engine: String,
-    /// Groq PlayAI voice name.
+    /// Cloud voice name (OpenAI audio voices: alloy, nova, shimmer, ...).
     #[serde(default = "default_tts_voice")]
     pub tts_voice: String,
     #[serde(default)]
@@ -121,6 +122,12 @@ fn migrate(settings: &mut Settings) {
         );
         settings.openrouter_model = default_model();
     }
+    if let Some(m) = settings.observer_model.as_deref() {
+        if LEGACY_OBSERVER_MODELS.contains(&m) {
+            log::info!("migrating observer model: {m} -> {}", default_observer_model());
+            settings.observer_model = Some(default_observer_model());
+        }
+    }
     if settings.tts_engine == "groq" {
         settings.tts_engine = "cloud".into();
     }
@@ -129,10 +136,20 @@ fn migrate(settings: &mut Settings) {
     }
 }
 
-/// The observer default THINKS — reasoning is where its value comes from.
+/// The observer's model. Reasoning stays ENABLED (that is where its value
+/// comes from) but it does not need a frontier model to do it: the job is
+/// summarising a short transcript into two small documents.
+///
+/// `z-ai/glm-5.3-flash` was the previous default and was intermittently
+/// blowing the 180s client timeout — costing the teaching plan an update on
+/// those turns, silently. Successful passes on the worker model run 19-22s.
+/// Fast and cheap beats clever here.
 pub fn default_observer_model() -> String {
-    "z-ai/glm-5.3-flash".into()
+    default_model()
 }
+
+/// Prior observer defaults — stored settings migrate off these on load.
+const LEGACY_OBSERVER_MODELS: &[&str] = &["z-ai/glm-5.3-flash"];
 
 fn default_target() -> String {
     "es-ES".into()
@@ -258,8 +275,10 @@ fn mask_shows_head_and_tail_only() {
 #[test]
 fn migrate_moves_legacy_defaults_to_current() {
     for legacy in LEGACY_DEFAULT_MODELS {
-        let mut s = Settings::default();
-        s.openrouter_model = legacy.to_string();
+        let mut s = Settings {
+            openrouter_model: legacy.to_string(),
+            ..Settings::default()
+        };
         migrate(&mut s);
         assert_eq!(s.openrouter_model, default_model());
     }

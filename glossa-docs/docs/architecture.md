@@ -16,9 +16,9 @@ flowchart TB
     subgraph WEB["Webview — React 19 + Vite + TS (src/)"]
         direction TB
         APP["App.tsx — topbar · tabs · settings modal"]
-        GUIDED["GuidedPage.tsx — chat stream · assist dial · composer<br/>breakdown pane · plan/profile drawer · mic"]
+        GUIDED["GuidedPage.tsx — chat stream · steer row · composer<br/>Coach/Analysis panel · plan/profile drawer · mic · TTS"]
         STORIES["StoriesPage.tsx — level chips · story canvas · tap-for-gloss"]
-        LIB["lib/ — tauri.ts (typed IPC wrapper) · log.ts · token-spacing.ts"]
+        LIB["lib/ — tauri.ts (typed IPC wrapper) · log.ts · speech.ts<br/>sentences.ts · token-spacing.ts · keyboard.ts · back.ts · i18n.ts"]
         APP --> GUIDED
         APP --> STORIES
         GUIDED --> LIB
@@ -27,8 +27,8 @@ flowchart TB
 
     subgraph CORE["Rust core (src-tauri)"]
         direction TB
-        CMD["commands.rs — IPC surface: get/save_settings · guided_turn<br/>generate_story · transcribe_audio · get_plan"]
-        STATE["lib.rs — AppState: settings · plan · profile ·<br/>recent_mechanics · observer_running"]
+        CMD["commands.rs — IPC surface (15 commands): settings · languages<br/>guided_turn · coach · scaffolds · word_insight · story · STT · TTS · plan"]
+        STATE["lib.rs — AppState: settings · plan · profile ·<br/>recent_mechanics · observer_running · coach_thread"]
         AI["ai.rs — Provider: SSE streaming + structured_validated ladder"]
         OBS["observer.rs — TeachingPlan + Profile · observer pass · directives_block"]
         SUP["prompts.rs · languages.rs · settings.rs"]
@@ -40,7 +40,7 @@ flowchart TB
     end
 
     NET["OpenRouter (chat completions) · Groq Whisper (STT)"]
-    DISK[("OS config dir — settings.json · plan.json · profile.json")]
+    DISK[("OS config dir — settings.json · plan.json · profile.json<br/>coach_thread.json · *.bak archives")]
 
     LIB -->|"invoke() commands"| CMD
     CMD -.->|"Channel GuidedEvent (streamed events)"| LIB
@@ -52,31 +52,46 @@ flowchart TB
 
 | File | Lines | Role |
 |---|---|---|
-| `src-tauri/src/commands.rs` | 663 | The whole v0.1 IPC surface; guided turn orchestration |
-| `src-tauri/src/ai.rs` | 378 | OpenAI-compatible client: streaming, schema-constrained structured output, fallback ladder, `$defs` inlining |
-| `src-tauri/src/observer.rs` | 278 | TeachingPlan/Profile documents, observer pass, `directives_block` |
-| `src-tauri/src/prompts.rs` | 216 | Prompt builders composed from shared blocks |
-| `src-tauri/src/languages.rs` | 78 | Language ladder (currently es-ES) + per-variant overlays |
-| `src-tauri/src/settings.rs` | 67 | Settings model + JSON persistence |
-| `src-tauri/src/lib.rs` | 80 | Bootstrap, `AppState`, command registration, logging |
-| `src/pages/GuidedPage.tsx` | 744 | The main surface |
-| `src/pages/StoriesPage.tsx` | 174 | Story reader |
-| `src/components/SettingsModal.tsx` | 180 | Settings UI |
-| `src/types.ts` | 102 | TS mirror of the Rust wire types |
-| `src/lib/*` | ~130 | invoke wrapper + log bridge + token spacing |
+| `src-tauri/src/commands.rs` | 1807 | The whole IPC surface; guided-turn orchestration, coach, TTS, stories |
+| `src-tauri/src/ai.rs` | 507 | OpenAI-compatible client: streaming, schema-constrained structured output, corrective retries, `$defs` inlining |
+| `src-tauri/src/prompts.rs` | 362 | Prompt builders composed from shared blocks |
+| `src-tauri/src/observer.rs` | 308 | TeachingPlan/Profile documents, observer pass, `directives_block` |
+| `src-tauri/src/settings.rs` | 271 | Settings model, migrations, key masking, JSON persistence |
+| `src-tauri/src/bench.rs` | 233 | `#[ignore]`d model-bench harness (live provider calls) |
+| `src-tauri/src/languages.rs` | 163 | Language registry (en-US, fr-FR, es-ES, ar) + dialects + overlays |
+| `src-tauri/src/lib.rs` | 97 | Bootstrap, `AppState`, command registration, logging |
+| `src/pages/GuidedPage.tsx` | 1079 | The main surface |
+| `src/components/SettingsModal.tsx` | 638 | Settings UI (two-column tree + search) |
+| `src/lib/i18n.ts` | 365 | UI chrome strings per native language |
+| `src/components/chat/TurnView.tsx` | 306 | Memoized turn renderer + `TokenSpan` interrogation gestures |
+| `src/hooks/useMicRecorder.ts` | 188 | Mic lifecycle: permissions, capture, silence auto-stop, Whisper |
+| `src/components/panes/CoachAnalysisPanel.tsx` | 167 | The unified right panel (Coach / Analysis tabs) |
+| `src/pages/StoriesPage.tsx` | 165 | Story reader |
+| `src/components/panes/AnalysisContent.tsx` | 161 | Pinned-turn breakdown |
+| `src/types.ts` | 149 | TS mirror of the Rust wire types |
+| `src/lib/*` | ~530 | invoke wrapper, log bridge, speech, sentences, token spacing, keyboard, back-stack, normalize |
 
-## IPC surface (complete, v0.1)
+## IPC surface (complete)
 
-Six commands, registered in `lib.rs::run()`:
+Fifteen commands, registered in `lib.rs::run()`:
 
-| Command | Direction | Payload | Notes |
-|---|---|---|---|
-| `get_settings` | FE ← BE | → `Settings` | Returns the full settings object, **including key material** (see Status, R12) |
-| `save_settings` | FE → BE | `Settings` | Persists to `settings.json`, updates in-memory state |
-| `guided_turn` | FE → BE | `message, history, assist_level, greeting, on_event: Channel<GuidedEvent>` | Returns the reply string once pass 1 finishes; analysis + observer arrive via the channel |
-| `generate_story` | FE ← BE | `level` → `StoryResponse` | One structured call |
-| `transcribe_audio` | FE ← BE | `audio_base64` → text | Groq `whisper-large-v3-turbo`, webm assumed |
-| `get_plan` | FE ← BE | → `{plan, profile}` | For the Plan drawer / initial load |
+| Command | Payload | Notes |
+|---|---|---|
+| `get_settings` | → `Settings` | Key material is **masked** (`head6••••••••tail6`) — the webview never sees raw keys |
+| `save_settings` | `Settings` | Persists to `settings.json`. An unchanged mask means "keep the stored key". A change of target/native/dialect **archives** `plan.json`/`profile.json`/`coach_thread.json` and resets the in-memory documents |
+| `validate_key` | `provider, key` → `KeyStatus` | Live provider check; resolves a masked value against the stored key server-side |
+| `get_languages` | → `LanguageInfo[]` | The language registry verbatim from `languages.rs`. Fetched once before first render (`main.tsx`); the webview keeps **no** language table of its own |
+| `get_diagnostics` | → `[(name, count)]` | The four `ai.rs` retry counters, for the logs overlay header |
+| `guided_turn` | `message, history, greeting, steering?, level?, topic?, on_event: Channel<GuidedEvent>` | Returns the reply string once pass 1 finishes; analysis, coach and observer arrive via the channel |
+| `generate_scaffolds` | `ScaffoldRequest` → `ScaffoldsOut` | Standalone scaffold regeneration after a steering change |
+| `word_insight` | word + context → `WordInsight` | Lemma / POS / form / role / usage card for one token |
+| `speak_text` | text → `TtsAudio` | Cloud TTS via OpenRouter `gpt-audio-mini`; PCM16 stream wrapped in a WAV container |
+| `transcribe_audio` | `audioBase64, prompt?` → text | Groq `whisper-large-v3-turbo`; `prompt` carries a target-language-only context hint |
+| `generate_story` | `level` → `StoryResponse` | One structured call |
+| `get_plan` | → `{plan, profile}` | For the Plan drawer / initial load |
+| `get_coach_thread` | → `CoachChatMessage[]` | The persisted private coach thread |
+| `coach_ask` | question → reply | Appends to `coach_thread.json` (40-message cap) |
+| `coach_thread_clear` | — | Wipes the coach thread |
 
 ### `GuidedEvent` (channel protocol, snake_case tagged)
 
@@ -84,7 +99,9 @@ Six commands, registered in `lib.rs::run()`:
 |---|---|---|
 | `reply_delta` | Pass 1 token | Appends to pending bubble |
 | `reply_done` | Pass 1 complete | Composer unlocks; turn becomes "analyzing…"; auto-pin breakdown |
-| `analysis_section` | Any one analysis sub-call completes | Merges that section into the turn immediately (progressive hydration — only the finished section's field is populated) |
+| `analysis_section` | Any one analysis sub-call completes | Merges that section into the turn immediately (progressive hydration — only the finished section's field is populated). Carries `tokens`, `translation`, `user_tokens`, `user_translation`, `mechanics` or `scaffolds` |
+| `coach_done` | Coach pass complete | Renders the coach card (remark, score meters, corrections, language-split chips) in the Coach tab |
+| `coach_failed` | Coach pass dead | Visible error in the Coach tab — fail loudly, never a blank pane |
 | `analysis_done` | All analysis sub-calls settled | Authoritative final merged state, including per-section degradations |
 | `analysis_failed` | Pass 2 dead | Marks turn reply-only; chips fall back to the newest turn that has scaffolds |
 | `plan_updated` | Observer pass complete | Updates Plan drawer + focus chips |
@@ -98,20 +115,24 @@ sequenceDiagram
     participant FE as Webview
     participant C as guided_turn
     participant R as Reply worker
-    participant A as Analysis ×4
+    participant A as Analysis ×5
+    participant K as Coach
     participant O as Observer
 
-    FE->>C: message, history(≤30), assist, greeting, channel
+    FE->>C: message, history(≤30), greeting, steering?, level?, topic?, channel
     C->>R: stream chat (temp 0.6, max 600 tok, reasoning OFF)
     R-->>FE: reply_delta ×n
     R-->>C: full reply
     C->>C: sanitize_reply (strip fences / leaked notes)
     C-->>FE: return reply (command resolves — FE unlocks)
     par background
-        C->>A: tokens (t=0.1) · translation (t=0.2) · mechanics (t=0.4) · scaffolds (t=0.6)
+        C->>A: tokens · translation · learner tokens · mechanics · scaffolds
         A-->>FE: analysis_section per sub-call as it lands
         A-->>FE: analysis_done (merged GuidedTurnResult) or analysis_failed
         C->>C: push mechanics into recent_mechanics ring (cap 20)
+    and
+        C->>K: coach pass (skipped on greeting turns)
+        K-->>FE: coach_done / coach_failed
     and
         C->>O: transcript + plan + profile + recent mechanics (reasoning ON, 8000 tok)
         O->>O: rewrite TeachingPlan + Profile
@@ -126,12 +147,13 @@ Key properties:
   `ReplyDone`; pass 2 and the observer run in `tokio::spawn`ed tasks.
 - **Progressive hydration.** Each analysis sub-call runs in its own task and
   emits `analysis_section` the moment it finishes — tokens/translation/
-  mechanics/scaffolds appear in the UI as they arrive, never gated behind the
-  slowest call. `analysis_done` remains the authoritative final state.
+  learner-tokens/mechanics/scaffolds appear in the UI as they arrive, never
+  gated behind the slowest call. `analysis_done` remains the authoritative
+  final state.
 - **The observer never overlaps itself.** An `observer_running` mutex flag
   skips a pass if the previous one is still thinking; the next turn picks it
   up. The plan is never more than one turn stale.
-- **Per-section degradation.** The four analysis sub-calls fail independently;
+- **Per-section degradation.** The five analysis sub-calls fail independently;
   a failed section simply never emits an `analysis_section` event and costs
   only that section in the final state (empty tokens, no mechanics, etc.).
 - **Anti-repetition.** `recent_mechanics` (ring buffer, last 20 card titles)
@@ -144,7 +166,8 @@ Key properties:
 | Role | Model default | Reasoning | Temp | max_tokens | Output |
 |---|---|---|---|---|---|
 | Reply worker | `google/gemini-2.5-flash` | disabled (per-family dialect: `enabled:false`, or `effort:minimal` on OpenAI) | 0.6 | 600 | plain text, streamed |
-| Analysis workers ×4 | same worker model | disabled | 0.1–0.6 | 6000 | schema-constrained JSON |
+| Analysis workers ×5 | same worker model | disabled | 0.1–0.6 | 6000 | schema-constrained JSON |
+| Coach | same worker model | disabled | — | 6000 | schema-constrained JSON (`CoachFeedback`) |
 | Observer | `z-ai/glm-5.3-flash` | **enabled** (the whole point) | 0.4 | 8000 | schema-constrained JSON |
 
 Model changes are decided by running the bench harness
@@ -224,8 +247,15 @@ Every AI prompt is addressable by id (`chat.reply`, `chat.tokens`,
   template; placeholders (`{tln}`, `{native}`, `{dialect}`, …) work in
   overrides exactly as in defaults.
 
-The `prompt_overrides` settings field is the plumbing; the UI section is the
-remaining work (tracked below).
+**Reality check:** `Settings.prompt_overrides` exists, persists, and
+round-trips — but **nothing reads it yet**. There is no prompt registry in
+`prompts.rs` (the builders are plain functions, not id-addressed), and no
+Settings UI section. Both are unbuilt.
+
+The field is not, however, dead weight to delete: it is the configuration
+surface for the agent workbench specified in
+[Observability](./observability), where the prompt id and the agent id are
+one id. Build the registry; do not remove the field.
 
 ## Voice pipeline: STT + TTS
 
@@ -265,13 +295,15 @@ Edge TTS (unofficial API, grey zone), Piper (offline neural, real machinery).
 | `settings.json` (keys, models, languages, mic) | `app_config_dir` (falls back to `%TEMP%/glossa`) | `save_settings` |
 | `plan.json` (TeachingPlan) | `app_config_dir` | observer pass, every success |
 | `profile.json` (Profile) | `app_config_dir` | observer pass, every success |
-| Assist level | `localStorage.glossa_assist` | UI |
+| Coach thread | `coach_thread.json` in `app_config_dir` (40-message cap) | `coach_ask`, `coach_thread_clear` |
+| Archived documents on language switch | `<name>.<old_target>.<unix>.bak` | `save_settings` |
+| Steer level / topic | `localStorage.glossa_level` / `glossa_topic` | `hooks/useSteering.ts` |
 | Target language mirror | `localStorage.glossa_target` | App on load/save |
 | Cached story | `localStorage.glossa_story_<lang>_<level>` | StoriesPage |
 
-**Conversation history lives only in memory** — the chat resets on restart
-(the plan/profile carry continuity). `AppState` also has a `learner_turns`
-counter that is currently unused.
+**Conversation history lives only in memory** — the chat resets on restart.
+Continuity across restarts is carried by `plan.json`, `profile.json` and
+`coach_thread.json` alone.
 
 ## Frontend state model
 
@@ -291,17 +323,22 @@ interface Turn {
 - The breakdown pane is pinned to the newest completed turn by default; tapping
   a bubble re-pins it (`pinnedId`).
 - **Tap-to-reveal in chat bubbles** (stories-style, shared `GlossPopup`
-  component): below assist 2, word tokens pop their gloss on tap; below
-  assist 3, gloss-less (punctuation) tokens reveal that sentence's
-  translation. Sentences are derived from terminal-punctuation token
-  boundaries and aligned by index against the split translation — on
-  mismatch, the full translation is shown. Scaffolds use best-available
-  hydration: the chips show the newest turn that has any, so the composer is
-  never empty while a fresh analysis runs.
-- Scaffolds come from the **latest** analyzed turn (never an older one — a
-  failed analysis clears them).
-- Mic: `MediaRecorder` → webm → base64 → `transcribe_audio`; auto-stop at 10s;
-  transcript appended to the composer input (never auto-sent).
+  component, `TokenSpan` in `chat/TurnView.tsx`): tapping a word token pops
+  its gloss (+ romanization); tapping a gloss-less punctuation token reveals
+  that sentence's translation; drag and press-and-hold reveal runs of
+  tokens; double-click / right-click opens the full `word_insight` card.
+  Applies to learner bubbles as well as tutor bubbles. Sentences are derived
+  from terminal-punctuation token boundaries (`lib/sentences.ts`) and
+  aligned by index against the split translation — on mismatch, the full
+  translation is shown.
+- Scaffolds use best-available hydration: the chips show the newest turn
+  that has any, so the composer is never empty while a fresh analysis runs.
+  A steering change regenerates them via `generate_scaffolds`; a failure
+  surfaces as a visible ⚠ in the suggestion header.
+- Mic (`hooks/useMicRecorder.ts`): `MediaRecorder` → webm/opus → base64 →
+  `transcribe_audio`; manual toggle with an explicit ✕ cancel, auto-stop
+  after 20s of silence (WebAudio RMS), live waveform. The transcript fills
+  the composer unless `auto_send` is on.
 
 ## Build & run (developer view)
 
@@ -312,7 +349,17 @@ npm run tauri build    # release bundle (NSIS + portable on Windows)
 npm run build          # tsc + vite build (frontend only)
 ```
 
-Release profile: `strip = true`, `lto = true`. Window 1200×800 (min
-900×620), dark background `#0c1420`. Capabilities: `core:default`,
-`log:default` only. Logging: stdout + log-dir file (2 MB, keep-one rotation)
-+ webview console bridge, Debug level.
+Release profile: `strip = true`, `lto = true`. Window 1200×800, **min width
+360** so the desktop window snaps into the same mobile layout as phones
+(single column, bottom nav) below 860px. Dark background `#0c1420`. Strict
+CSP (self + ipc + asset — the app loads no remote content). Capabilities:
+`core:default`, `log:default` only. Logging: stdout + log-dir file (2 MB,
+keep-one rotation) + webview console bridge, Debug level.
+
+Android: `npm run android` (emulator dev loop) / `npm run android:apk`
+(sideloadable debug APK) — see [Platforms](./platforms) for the machine-specific
+fixes that must survive a `gen/android` regeneration.
+
+CI (`.github/workflows/ci.yml`) runs three jobs: frontend (`npm test` +
+`npm run build`), Rust (`cargo clippy --lib -- -D warnings` + `cargo test
+--lib`), and the docs build.

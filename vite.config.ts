@@ -11,6 +11,17 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: process.env.TAURI_DEV_HOST || false,
+    watch: {
+      // Building the docs site or the Rust core while `tauri dev` is running
+      // used to trip a full page reload — which wipes the conversation,
+      // since turns live only in memory. None of these feed the app bundle.
+      ignored: [
+        '**/glossa-docs/**',
+        '**/src-tauri/target/**',
+        '**/src-tauri/gen/**',
+        '**/.build-artifacts/**',
+      ],
+    },
   },
   build: {
     target: 'es2022',

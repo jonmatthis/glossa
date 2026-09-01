@@ -77,7 +77,13 @@ body {
 
 /* ── Guided: split layout ─────────────────────────────────────────────── */
 .split { flex: 1; min-height: 0; display: flex; }
-.chat { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; background: var(--paper); }
+.chat {
+  flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column;
+  background: var(--paper);
+  /* The dev panel shrinks this pane; without clipping, the composer's
+     controls bleed out over the panel below. */
+  overflow: hidden;
+}
 /* Overflow guards: flex's default min-width/min-height:auto lets wide
    token/gloss columns and long chats blow past the viewport — break the
    chain in both axes so .stream scrolls instead of stretching the page. */
@@ -522,10 +528,40 @@ body {
 }
 .logs-fab:hover { color: var(--ink-d); border-color: var(--steel); }
 .logs-fab.open { color: var(--steel); border-color: var(--steel); }
+/* A layout participant, NOT an overlay: it is the last flex child of .app,
+   so opening it shrinks .content instead of covering the composer. Height
+   comes from an inline style set by the resize drag. */
 .logs-panel {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 54;
-  height: 46dvh; display: flex; flex-direction: column;
-  background: rgba(12, 20, 32, 0.97); border-top: 1px solid var(--line);
+  flex: none; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+/* Drag the top edge to resize; the height persists per device. Generous hit
+   area, hairline appearance — same trick as .split-bar. */
+.logs-resize {
+  flex: none; height: 7px; margin-top: -3px; cursor: ns-resize;
+  background: linear-gradient(var(--line2), var(--line2)) center/100% 1px no-repeat;
+  touch-action: none;
+}
+.logs-resize:hover { background: linear-gradient(var(--steel), var(--steel)) center/100% 2px no-repeat; }
+.logs-window-bar {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px 3px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--faint-d);
+}
+.logs-window-title em { font-style: normal; color: var(--steel); text-transform: none; letter-spacing: 0; }
+
+/* The popped-out window owns its whole viewport. */
+.dev-window {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  background: var(--bg);
+}
+
+/* The dev panel as the third mobile surface. */
+.dev-surface {
+  flex: 1; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column; background: var(--bg);
 }
 .logs-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -545,6 +581,362 @@ body {
   white-space: pre-wrap; word-break: break-word;
 }
 .logs-t { color: var(--faint-d); margin-right: 6px; }
+
+/* Runs view — the developer rung of the observability ladder.
+   Same records the 💭 agent bubbles will render at bites 4-5. */
+.logs-tabs {
+  display: flex; gap: 2px; flex: none; padding: 6px 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.logs-tab {
+  background: none; border: 1px solid transparent; border-bottom: none;
+  color: var(--mut-d); cursor: pointer; padding: 6px 14px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; border-radius: 4px 4px 0 0;
+}
+.logs-tab:hover { color: var(--ink-d); }
+.logs-tab.active {
+  color: var(--amber); border-color: var(--line);
+  background: var(--inset);
+}
+.runs-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.runs-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); flex: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--steel);
+}
+.runs-body { flex: 1; overflow-y: auto; padding: 6px 10px 16px; overscroll-behavior: contain; }
+.run-group { margin-bottom: 10px; }
+.run-group-head {
+  display: flex; align-items: baseline; gap: 10px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--faint-d);
+  padding: 6px 4px 4px; border-bottom: 1px dotted var(--line);
+}
+.run-group-meta { color: var(--mut-d); letter-spacing: 0; text-transform: none; }
+.run-row { border-left: 2px solid transparent; }
+.run-row.retried_then_ok { border-left-color: var(--amber-deep); }
+.run-row.failed { border-left-color: #e06c6c; }
+.run-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 5px 6px; font-family: var(--mono); font-size: 10.5px;
+  color: var(--mut-d);
+}
+.run-head:hover { background: rgba(111, 155, 255, 0.07); }
+.run-caret { color: var(--faint-d); width: 10px; flex: none; }
+.run-label { font-weight: 600; min-width: 84px; flex: none; }
+.run-agent { color: var(--faint-d); flex: 1; }
+.run-time { color: var(--ink-d); }
+.run-ttft { color: var(--faint-d); }
+.run-tokens { color: var(--mut-d); }
+.run-badge {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 3px; border: 1px solid currentColor;
+}
+.run-badge.amber { color: var(--amber); }
+.run-badge.red { color: #e06c6c; }
+.run-detail {
+  padding: 6px 6px 10px 22px; font-family: var(--mono); font-size: 10px;
+  border-bottom: 1px dotted var(--line);
+}
+.run-kv { display: flex; gap: 10px; line-height: 1.8; }
+.run-kv > span { color: var(--faint-d); min-width: 88px; flex: none; }
+.run-kv code { color: var(--ink-d); word-break: break-all; }
+.run-attempts { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.run-attempt {
+  display: flex; gap: 8px; align-items: baseline; padding: 3px 6px;
+  border-radius: 3px; background: rgba(255, 255, 255, 0.03); flex-wrap: wrap;
+}
+.run-attempt-n { color: var(--faint-d); flex: none; }
+.run-attempt-kind { color: var(--mut-d); min-width: 118px; flex: none; }
+.run-attempt-ms { color: var(--faint-d); }
+.run-attempt-err { color: var(--amber); flex-basis: 100%; word-break: break-word; }
+.run-attempt.rate_limited .run-attempt-kind,
+.run-attempt.unparseable .run-attempt-kind,
+.run-attempt.invalid .run-attempt-kind { color: var(--amber); }
+.run-attempt.failed .run-attempt-kind { color: #e06c6c; }
+.run-error { margin-top: 6px; color: #e06c6c; word-break: break-word; }
+
+/* ── The agent graph (D2 of the disclosure ladder) ──────────────────────
+   Rendered from graph.rs. Custom nodes only — no React Flow chrome — so it
+   reads as part of the dark analysis layer. Live state is motion, not
+   spinners; real numbers sit on the node face. */
+.graph-view { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.graph-tabs {
+  display: flex; gap: 4px; flex: none; padding: 8px 12px 6px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+.graph-pick {
+  background: none; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--mut-d); cursor: pointer; padding: 3px 12px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+}
+.graph-pick:hover { color: var(--ink-d); border-color: var(--line2); }
+.graph-pick.active { color: var(--amber); border-color: var(--amber-deep); }
+.graph-pick.reset { margin-left: auto; color: var(--faint-d); border-style: dashed; }
+.graph-pick.reset:hover { color: var(--steel); border-color: var(--steel); }
+.graph-desc {
+  flex: none; padding: 8px 14px; color: var(--mut-d);
+  font-family: var(--sans); font-size: 11.5px; line-height: 1.5;
+  border-bottom: 1px solid var(--line);
+}
+.graph-body { flex: 1; min-height: 0; display: flex; }
+
+/* Panes, not tabs — every pipeline can be open at once. Two up by default;
+   a pane can take the full width when it needs the room. */
+.gpanes {
+  position: relative;
+  flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid; gap: 1px; background: var(--line); align-content: start;
+}
+/* Maximized: one pane owns the WHOLE area, both axes — not just full width. */
+.gpanes.maximized { display: flex; overflow: hidden; }
+.gpane {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--bg); position: relative;
+}
+.gpane.wide { grid-column: 1 / -1; }
+.gpane.max { flex: 1; min-height: 0; }
+
+/* Drag the bottom edge to set row height. */
+.gpane-resize {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 7px;
+  cursor: ns-resize; touch-action: none; z-index: 4;
+}
+.gpane-resize:hover { background: var(--steel); opacity: 0.5; }
+
+/* Splitter between the two pane columns. */
+.gcol-split {
+  position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px;
+  cursor: col-resize; touch-action: none; z-index: 5;
+}
+.gcol-split:hover { background: var(--steel); opacity: 0.5; }
+
+/* Splitter on the inspector's left edge — drag left to widen. */
+.ins-split {
+  flex: none; width: 7px; cursor: col-resize; touch-action: none;
+  background: linear-gradient(var(--line), var(--line)) center/1px 100% no-repeat;
+}
+.ins-split:hover { background: linear-gradient(var(--steel), var(--steel)) center/2px 100% no-repeat; }
+.gpane-head {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px 4px; border-bottom: 1px solid var(--line);
+  background: var(--chrome); cursor: grab;
+}
+.gpane-head:active { cursor: grabbing; }
+.gpane-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--amber);
+}
+.gpane-btn {
+  flex: none; background: none; border: 1px solid transparent; border-radius: 4px;
+  color: var(--faint-d); cursor: pointer; font-size: 11px; line-height: 1;
+  padding: 3px 5px;
+}
+.gpane-btn:hover { color: var(--ink-d); border-color: var(--line2); }
+.gpane-btn.close:hover { color: #e06c6c; border-color: #e06c6c; }
+.gpane-desc {
+  flex: none; margin: 0; padding: 6px 10px;
+  font-family: var(--sans); font-size: 10.5px; line-height: 1.45;
+  color: var(--mut-d); border-bottom: 1px solid var(--line);
+}
+.graph-canvas { flex: 1; min-width: 0; min-height: 0; background: var(--inset); }
+
+/* Inspector — beside the graph, never behind a tab. */
+.graph-inspector {
+  flex: none; min-width: 0; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--line); background: var(--chrome);
+  padding: 10px 12px 14px; font-family: var(--mono); font-size: 10px;
+}
+.ins-head { display: flex; align-items: baseline; gap: 8px; }
+.ins-head strong { font-size: 12px; }
+.ins-kind {
+  font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint-d);
+}
+.ins-purpose {
+  margin: 6px 0 10px; font-family: var(--sans); font-size: 11.5px;
+  line-height: 1.55; color: var(--mut-d);
+}
+.ins-purpose.muted { color: var(--faint-d); font-style: italic; }
+.ins-grid {
+  display: grid; grid-template-columns: 78px 1fr; gap: 3px 8px;
+  align-items: baseline;
+}
+.ins-grid > span { color: var(--faint-d); }
+.ins-grid code { color: var(--ink-d); word-break: break-all; }
+.ins-outcome.ok { color: var(--mut-d); }
+.ins-outcome.retried_then_ok { color: var(--amber); }
+.ins-outcome.failed { color: #e06c6c; }
+.ins-attempts { margin: 8px 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* Content: what it was asked, and what came back. */
+.ins-section { margin-top: 6px; border-top: 1px solid var(--line); }
+.ins-section-head {
+  display: flex; align-items: baseline; gap: 6px; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 7px 0 5px; color: var(--mut-d);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ins-section-head:hover { color: var(--ink-d); }
+.ins-caret { color: var(--faint-d); }
+.ins-len { margin-left: auto; color: var(--faint-d); text-transform: none; letter-spacing: 0; }
+.ins-pre {
+  margin: 0 0 8px; padding: 8px; max-height: 300px; overflow: auto;
+  background: var(--inset); border: 1px solid var(--line); border-radius: 4px;
+  font-size: 10px; line-height: 1.5; color: var(--ink-d);
+  white-space: pre-wrap; word-break: break-word; overscroll-behavior: contain;
+}
+
+/* Live run list — the timeline beside the map. */
+.ins-runs-head {
+  margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line);
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--steel);
+}
+.ins-runs { display: flex; flex-direction: column; gap: 1px; margin-top: 5px; }
+.ins-run {
+  display: flex; align-items: baseline; gap: 7px; width: 100%;
+  background: none; border: none; border-left: 2px solid transparent;
+  cursor: pointer; text-align: left; padding: 3px 5px;
+  font-family: var(--mono); font-size: 9.5px; color: var(--mut-d);
+}
+.ins-run:hover { background: rgba(111, 155, 255, 0.08); }
+.ins-run.sel { background: rgba(111, 155, 255, 0.14); border-left-color: var(--steel); }
+.ins-run.retried_then_ok { border-left-color: var(--amber-deep); }
+.ins-run.failed { border-left-color: #e06c6c; }
+.ins-run.live { border-left-color: var(--amber); }
+.ins-run-turn { color: var(--faint-d); width: 16px; flex: none; }
+.ins-run-op { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ins-run-ms { color: var(--ink-d); }
+.ins-run-retry { color: var(--amber); }
+
+@media (max-width: 1100px) {
+  /* One column: the inline grid-template-columns is overridden here. */
+  .gpanes:not(.maximized) { grid-template-columns: minmax(0, 1fr) !important; }
+  .gcol-split { display: none; }
+}
+@media (max-width: 860px) {
+  /* No room to sit side by side on a phone — stack them. */
+  .graph-body { flex-direction: column; }
+  .graph-inspector { width: 100% !important; flex: 0 0 44%; border-left: none; border-top: 1px solid var(--line); }
+  .ins-split { display: none; }
+}
+
+/* Nodes */
+.gnode {
+  position: relative; display: flex; flex-direction: column; gap: 2px;
+  align-items: flex-start; text-align: left; cursor: pointer;
+  min-width: 132px; padding: 8px 11px;
+  background: var(--chrome); color: var(--ink-d);
+  border: 1px solid var(--line2); border-left: 3px solid var(--accent);
+  border-radius: 5px; font-family: var(--mono);
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+.gnode { cursor: grab; }
+.gnode:active { cursor: grabbing; }
+.gnode:hover { border-color: var(--accent); transform: translateY(-1px); }
+.gnode-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em; }
+.gnode-kind {
+  font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint-d);
+}
+.gnode-stats { font-size: 9.5px; color: var(--mut-d); }
+
+/* Endpoints (your message / your screen) read as places, not machinery. */
+.gnode.k-input {
+  background: transparent; border-style: dashed; border-left-style: dashed;
+  color: var(--mut-d);
+}
+.gnode.k-barrier { background: var(--inset); border-style: dotted; }
+.gnode.k-faculty { border-left-color: var(--faint-d); }
+
+/* Live state: a slow breath, not a spinner. */
+.gnode.s-running {
+  border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber-deep);
+}
+.gnode-pulse {
+  position: absolute; inset: -3px; border-radius: 7px; pointer-events: none;
+  border: 1px solid var(--amber); animation: gpulse 900ms ease-out infinite;
+}
+@keyframes gpulse {
+  0%   { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0;   transform: scale(1.06); }
+}
+.gnode.s-ok { border-left-color: var(--accent); }
+.gnode.s-retried_then_ok { border-color: var(--amber-deep); }
+.gnode.s-failed { border-color: #e06c6c; border-left-color: #e06c6c; }
+
+/* React Flow overrides — keep its chrome out of the way. */
+.graph-canvas .react-flow__handle {
+  width: 5px; height: 5px; background: var(--line2); border: none;
+}
+/* Endpoints keep their handles (edges need an anchor) but should not show
+   connector dots — they are places, not machinery. */
+.gnode.k-input .react-flow__handle { opacity: 0; }
+.graph-canvas .react-flow__controls-button {
+  background: var(--chrome); border-bottom: 1px solid var(--line);
+  fill: var(--mut-d);
+}
+.graph-canvas .react-flow__controls-button:hover { background: var(--chrome2); }
+.graph-canvas .react-flow__attribution {
+  background: transparent; font-size: 8px;
+}
+.graph-canvas .react-flow__attribution a { color: var(--faint-d); }
+.graph-canvas .react-flow__edge-text { fill: var(--mut-d); font-size: 9px; }
+.graph-canvas .react-flow__edge-textbg { fill: var(--inset); }
+.graph-canvas .react-flow__edge.contradicted .react-flow__edge-text { fill: #e06c6c; }
+
+.graph-foot {
+  flex: none; padding: 7px 14px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 9px; color: var(--faint-d);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.graph-legend { display: flex; gap: 14px; flex-wrap: wrap; }
+.lg::before {
+  content: ''; display: inline-block; width: 14px; height: 0;
+  border-top-width: 2px; margin-right: 5px; vertical-align: middle;
+}
+.lg.hydrate::before { border-top: 2px solid var(--amber-deep); }
+.lg.fan_in::before { border-top: 2px dotted var(--line2); }
+.lg.conditional::before { border-top: 2px dashed var(--steel-deep); }
+.lg.background::before { border-top: 2px dotted var(--faint-d); }
+.graph-state > span { color: var(--mut-d); }
+
+/* D3: click a node, get its run. */
+.graph-detail {
+  position: absolute; right: 10px; bottom: 54px; width: min(320px, calc(100% - 20px));
+  background: rgba(20, 32, 46, 0.98); border: 1px solid var(--line2);
+  border-radius: 6px; padding: 10px 12px; z-index: 5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.graph-detail-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-d);
+  margin-bottom: 6px;
+}
+.graph-detail-purpose {
+  margin: 0 0 8px; font-family: var(--sans); font-size: 11.5px;
+  line-height: 1.55; color: var(--mut-d);
+}
+.graph-detail-purpose.muted { color: var(--faint-d); font-style: italic; }
+.graph-detail-run { font-family: var(--mono); font-size: 10px; }
+
+/* The graph reporting on its own truthfulness. A diagram that cannot tell
+   you when it is wrong is a claim, not an observation. */
+.graph-fidelity {
+  flex: none; padding: 5px 14px; font-family: var(--mono); font-size: 9.5px;
+  border-top: 1px solid var(--line); line-height: 1.5;
+}
+.graph-fidelity.ok { color: var(--faint-d); }
+.graph-fidelity.bad { color: #e06c6c; background: rgba(224, 108, 108, 0.08); }
 
 /* Settings modal */
 .modal-backdrop {
@@ -683,14 +1075,25 @@ body {
   background: var(--chrome); padding-bottom: env(safe-area-inset-bottom);
 }
 .mobile-nav-item {
-  flex: 1; padding: 10px 0; border: none; background: none;
-  color: var(--mut-d); font-size: 13px; cursor: pointer;
+  flex: 1; padding: 10px 2px; border: none; background: none;
+  color: var(--mut-d); font-size: 12px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Three surfaces get tight on a narrow phone — drop the words, keep the
+   glyphs, below 380px. */
+@media (max-width: 380px) {
+  .mobile-nav-item { font-size: 0; padding: 12px 2px; }
+  .mobile-nav-item::first-letter { font-size: 19px; }
 }
 .mobile-nav-item.active { color: var(--steel); background: var(--inset); }
 @media (max-width: 860px) {
   .split { flex-direction: column; }
   .chat { flex: 1 1 auto; min-height: 0; }
   .break { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .dev-surface { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  /* The graph needs real estate; on a phone it gets the whole surface. */
+  .graph-canvas { min-height: 240px; }
+  .graph-detail { bottom: 10px; }
   .msg { max-width: 94%; }
   /* iOS zooms any focused input under 16px — keep inputs at 16 on touch. */
   .field, .form-row input, .form-row select { font-size: 16px; }

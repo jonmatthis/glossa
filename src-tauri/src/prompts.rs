@@ -60,15 +60,16 @@ pub fn no_emoji_rule() -> &'static str {
     "- NEVER use emojis, emoticons, or any Unicode pictographic symbols in your responses. They are strictly forbidden because responses may be read aloud by a text-to-speech engine and emoticons produce unnatural noise (e.g. \"face with tears of joy\"). Plain text only."
 }
 
+/// `directives` carries the language overlay, the observer's plan block and
+/// the topic steering, in that order — the same single vehicle the mechanics
+/// and scaffolds prompts take. The overlay must NOT also be passed
+/// separately or it lands in the prompt twice.
 pub fn guided_reply_prompt(
-    target_language: &str,
     target_language_name: &str,
     cefr_level: &str,
     native_language_name: &str,
-    overlay_text: &str,
     directives: &str,
 ) -> String {
-    let overlay_section = overlay_text;
     format!(
         "{persona}\n\n\
          Mandatory rules (these override everything else):\n\
@@ -79,8 +80,7 @@ pub fn guided_reply_prompt(
          - SHELTERING: Use mostly high-frequency vocabulary the student already likely knows, plus at most one or two new words per reply (comprehensible input, i+1). Introduce new grammar gently and recycle earlier structures.\n\
          - RECASTS: If the student's message contains a small mistake, model the correct form naturally in your reply (recast). Never explicitly say \"that was wrong\".\n\
          - CONTINUITY: Every reply must give the learner something to respond to — a question, a choice, an opinion to agree or disagree with, or a detail they can react to. Never close the conversation with a bare statement of fact or a one-word answer. If you acknowledge what they said, add one new element (a related detail, a follow-up, a gentle challenge) that invites their next turn. Dead-end replies (\"Sí.\", \"De acuerdo.\") are forbidden unless the learner explicitly asked for yes/no confirmation.\n\
-         {emoji}\n\
-         {overlay}\n\n\
+         {emoji}\n\n\
          {directives}\n\n\
          Respond with the conversational reply text and nothing else.",
         persona = persona_block("language tutor", target_language_name, cefr_level, native_language_name),
@@ -88,7 +88,6 @@ pub fn guided_reply_prompt(
         always = always_respond_rule(target_language_name),
         tln = target_language_name,
         emoji = no_emoji_rule(),
-        overlay = overlay_section,
         directives = directives,
     )
 }
@@ -96,6 +95,7 @@ pub fn guided_reply_prompt(
 pub fn guided_tokens_prompt(
     target_language_name: &str,
     native_language_name: &str,
+    romanization_scheme: Option<&str>,
 ) -> String {
     format!(
         "You tokenize {tln} text for a learner glossary.\n\
@@ -104,16 +104,27 @@ pub fn guided_tokens_prompt(
          gloss in context. Punctuation-only tokens get a null gloss. Tag each\n\
          token with a Universal part of speech (NOUN, VERB, ADJ, ADV, PRON, DET,\n\
          ADP, CCONJ, SCONJ, AUX, PART, INTJ, NUM, PROPN, PUNCT). Mark at most 3\n\
-         tokens as notable. Copy each token's text EXACTLY from the reply and\n\
-         never skip words. If the reply is in Arabic script, ALSO give each\n\
-         token a romanization in ALA-LC in its `romanization` field.\n\
          tokens as notable — forms a learner should notice (inflections,\n\
          constructions, word order). Copy each token's text EXACTLY from the\n\
-         reply and never skip words.\n\
+         reply and never skip words.{roman}\n\
          Respond with the structured tokenization you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
+        roman = romanization_line(romanization_scheme),
     )
+}
+
+/// The romanization instruction, or nothing for Latin-script targets. The
+/// scheme comes from the language registry (`languages::romanization`), so a
+/// new non-Latin rung ships its scheme with the language, not with the prompt.
+fn romanization_line(scheme: Option<&str>) -> String {
+    match scheme {
+        Some(s) => format!(
+            "\n         ALSO give every token a romanization in {s} in its \
+             `romanization` field."
+        ),
+        None => String::new(),
+    }
 }
 
 pub fn guided_translation_prompt(
@@ -305,7 +316,11 @@ pub fn coach_user_message(
     )
 }
 
-pub fn learner_tokens_prompt(target_language_name: &str, native_language_name: &str) -> String {
+pub fn learner_tokens_prompt(
+    target_language_name: &str,
+    native_language_name: &str,
+    romanization_scheme: Option<&str>,
+) -> String {
     format!(
         "Analyze the LEARNER'S latest message in {tln}. The learner is a student:\n\
           their words may contain mistakes, mixed languages, or questions about\n\
@@ -313,12 +328,13 @@ pub fn learner_tokens_prompt(target_language_name: &str, native_language_name: &
          1. tokenize: split the message word by word (punctuation attached to\n\
             the preceding word), in order, never skipping words. Give each token\n\
             a short {native} gloss IN CONTEXT - what the learner MEANT, including\n\
-            for their mistakes. Mark at most 3 tokens as notable.\n\
+            for their mistakes. Mark at most 3 tokens as notable.{roman}\n\
          2. translation: a natural {native} translation of what the learner\n\
             actually communicated (not a word-for-word rendering).\n\n\
          Respond with the structured analysis you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
+        roman = romanization_line(romanization_scheme),
     )
 }
 

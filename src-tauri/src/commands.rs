@@ -8,13 +8,16 @@ use serde_json::json;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+use crate::graph;
+use crate::ontology;
 use crate::ai::Provider;
 use crate::ai::truncate_for_log;
-use crate::languages::{iso639, language_display, native_display, overlay};
+use crate::languages::{self, iso639, language_display, native_display, overlay};
 use crate::observer;
 use crate::prompts;
 use crate::settings;
 use crate::settings::Settings;
+use crate::trace::{self, RunContext};
 use crate::AppState;
 use std::path::Path;
 use futures_util::StreamExt;
@@ -278,6 +281,88 @@ pub async fn validate_key(
 /// Retry counters for the logs overlay. Retries here are ONLY for transient
 /// failures (429s, malformed model output fed back for correction) — nothing
 /// falls back silently anywhere in the app.
+/// The language registry, verbatim from `languages.rs`. The webview holds no
+/// language table of its own — it renders what this returns.
+#[tauri::command]
+pub fn get_languages() -> Vec<languages::LanguageInfo> {
+    languages::registry()
+}
+
+/// Label of the popped-out observability window. Also listed in
+/// `capabilities/default.json` — a window not named there gets no IPC.
+pub const DEV_WINDOW_LABEL: &str = "glossa-dev";
+
+/// Pop the observability panel out into its own OS window.
+///
+/// Built in Rust rather than from JS on purpose: the JS route needs
+/// `core:webview:allow-create-webview-window` in the capability set, and
+/// there is no reason to hand the webview the ability to spawn windows when
+/// the app only ever opens this one. Desktop only — Tauri mobile has no
+/// second window.
+#[tauri::command]
+pub async fn open_dev_window(app: AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        // Already open: focus it instead of stacking duplicates.
+        if let Some(existing) = app.get_webview_window(DEV_WINDOW_LABEL) {
+            let _ = existing.unminimize();
+            existing.set_focus().map_err(|e| e.to_string())?;
+            info!("[cmd] dev window already open - focused");
+            return Ok(());
+        }
+        tauri::WebviewWindowBuilder::new(
+            &app,
+            DEV_WINDOW_LABEL,
+            // Same bundle and same entry point. The frontend routes on the
+            // WINDOW LABEL, not a query string: WebviewUrl::App takes a
+            // PathBuf, and '?' in a Windows path is asking for trouble.
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("Glossa · observability")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(420.0, 320.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("could not open the observability window: {e}"))?;
+        info!("[cmd] dev window opened");
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err("separate windows are desktop-only; use the dev tab instead".into())
+    }
+}
+
+/// The execution graph, declared in `graph.rs`. The webview draws only what
+/// this returns — there is no second copy of the graph in the frontend.
+#[tauri::command]
+pub fn get_graph() -> Vec<graph::Graph> {
+    graph::all()
+}
+
+/// The declared graph diffed against what actually ran. The observability
+/// layer reporting on its own fidelity — see `trace::reconcile`.
+#[tauri::command]
+pub fn get_reconciliation() -> trace::Reconciliation {
+    trace::reconcile()
+}
+
+/// Every AI run still in memory, oldest first. The observability substrate:
+/// one record per agent execution, with per-attempt detail.
+#[tauri::command]
+pub fn get_runs() -> Vec<trace::Run> {
+    trace::snapshot()
+}
+
+/// Drop the in-memory run history.
+#[tauri::command]
+pub fn clear_runs() -> Result<(), String> {
+    trace::clear();
+    info!("[cmd] run history cleared");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_diagnostics() -> Vec<(String, u64)> {
     crate::ai::retry_stats_snapshot()
@@ -324,7 +409,7 @@ pub struct CoachFeedback {
 }
 
 impl CoachFeedback {
-    fn validate(&self) -> Option<String> {
+    pub fn validate(&self) -> Option<String> {
         if self.remark.trim().is_empty() {
             return Some("remark must not be empty".into());
         }
@@ -626,6 +711,9 @@ pub async fn guided_turn(
         return Err("No OpenRouter API key configured. Open Settings and add your key.".into());
     }
     let started = std::time::Instant::now();
+    // Every run fired by this turn shares a turn id, so the UI can group
+    // them into "what happened when you sent that message".
+    let turn_id = trace::next_turn_id();
     let target = settings.target_language.clone();
     info!(
         "[cmd] guided_turn start: greeting={greeting} message_len={} history={} target={target}",
@@ -636,6 +724,9 @@ pub async fn guided_turn(
     let native = native_display(&settings.native_language);
     let target_overlay =
         overlay(&target, Some(settings.target_dialect.as_str()));
+    // Non-Latin targets get a romanization alongside every gloss; the scheme
+    // is the language's, not the prompt's.
+    let romanization_scheme = languages::romanization(&target);
     // Learner-selected level (steer row) maps to CEFR for every prompt.
     let cefr = match level.as_deref() {
         Some("zero") => "PRE-A1",
@@ -669,14 +760,7 @@ pub async fn guided_turn(
             topic_directive
         )
     };
-    let reply_system = prompts::guided_reply_prompt(
-        &target,
-        &tln,
-        &cefr,
-        &native,
-        &target_overlay,
-        &directives,
-    );
+    let reply_system = prompts::guided_reply_prompt(&tln, &cefr, &native, &directives);
     let mut reply_messages = vec![json!({"role": "system", "content": reply_system})];
     for turn in history.iter().rev().take(30).rev() {
         reply_messages.push(json!({"role": turn.role, "content": turn.content}));
@@ -718,10 +802,65 @@ pub async fn guided_turn(
         reply_messages.push(json!({"role": "user", "content": message}));
     }
 
+    // `tokenize_learner` reads ONLY the learner's message — see
+    // `turn_plan::TURN_STEPS`, where its `needs` is `[LearnerMessage]`. So
+    // it starts HERE, in parallel with the reply, instead of waiting for a
+    // dependency it never had: worth ~700ms on the learner's own bubble.
+    //
+    // The graph draws that edge from the input node off the same
+    // declaration, and `trace::reconcile` contradicts the edge if this ever
+    // regresses to waiting.
+    let learner_message = if greeting {
+        "(session start)".to_string()
+    } else if let Some(change) = steering.as_deref().filter(|s| !s.trim().is_empty()) {
+        format!("(changed practice settings: {change})")
+    } else {
+        message.trim().to_string()
+    };
+    let learner_tokens_task = {
+        let provider = Provider::openrouter(&settings.openrouter_key, &settings.openrouter_model);
+        let channel = on_event.clone();
+        let learner_msgs = vec![
+            json!({"role": "system", "content": prompts::learner_tokens_prompt(&tln, &native, romanization_scheme)}),
+            json!({"role": "user", "content": format!("Learner message to analyze:\n{}", learner_message)}),
+        ];
+        tokio::spawn(async move {
+            let result = provider
+                .structured_validated::<LearnerTokensOut, _>(
+                    RunContext::new(ontology::op::TOKENIZE_LEARNER, Some(turn_id)),
+                    &learner_msgs,
+                    0.1,
+                    "LearnerTokensOut",
+                    false,
+                    |t: &LearnerTokensOut| {
+                        if t.tokens.is_empty() || t.translation.trim().is_empty() {
+                            Some("tokens and translation must not be empty".into())
+                        } else { None }
+                    },
+                )
+                .await;
+            if let Ok(out) = &result {
+                let _ = channel.send(GuidedEvent::AnalysisSection {
+                    tokens: None,
+                    translation: None,
+                    user_tokens: Some(out.tokens.clone()),
+                    user_translation: Some(out.translation.clone()),
+                    mechanics: None,
+                    scaffolds: None,
+                });
+            }
+            result
+        })
+    };
+
     let provider = Provider::openrouter(&settings.openrouter_key, &settings.openrouter_model);
     let channel = on_event.clone();
     let full_reply = provider
-        .chat_streaming(&reply_messages, 0.6, &mut |delta| {
+        .chat_streaming(
+            RunContext::new(ontology::op::REPLY, Some(turn_id)),
+            &reply_messages,
+            0.6,
+            &mut |delta| {
             let _ = channel.send(GuidedEvent::ReplyDelta {
                 text: delta.to_string(),
             });
@@ -822,6 +961,7 @@ pub async fn guided_turn(
             // The observer USES its reasoning budget — no disable here.
             let result = observer::run_observer(
                 &provider,
+                RunContext::new(ontology::op::REFLECT, Some(turn_id)),
                 &tln_for_observer,
                 &transcript.join("
 "),
@@ -862,16 +1002,9 @@ pub async fn guided_turn(
     // Each sub-task is tiny (100-500 output tokens), so the wall time is the
     // slowest single call (~3-8s) instead of one serialized 1500-token JSON
     // dump. Failures degrade per-section.
-    let learner_message = if greeting {
-        "(session start)".to_string()
-    } else if let Some(change) = steering.as_deref().filter(|s| !s.trim().is_empty()) {
-        format!("(changed practice settings: {change})")
-    } else {
-        message.trim().to_string()
-    };
 
     let tokens_msgs = vec![
-        json!({"role": "system", "content": prompts::guided_tokens_prompt(&tln, &native)}),
+        json!({"role": "system", "content": prompts::guided_tokens_prompt(&tln, &native, romanization_scheme)}),
         json!({"role": "user", "content": format!("Tutor reply to tokenize:\n{reply}")}),
     ];
     let translation_msgs = vec![
@@ -909,6 +1042,7 @@ pub async fn guided_turn(
             tokio::spawn(async move {
                 let result = provider
                     .structured_validated::<TokensOut, _>(
+                        RunContext::new(ontology::op::TOKENIZE, Some(turn_id)),
                         &tokens_msgs,
                         0.1,
                         "TokensOut",
@@ -947,6 +1081,7 @@ pub async fn guided_turn(
             tokio::spawn(async move {
                 let result = provider
                     .structured_validated::<TranslationOut, _>(
+                        RunContext::new(ontology::op::TRANSLATE, Some(turn_id)),
                         &translation_msgs,
                         0.2,
                         "TranslationOut",
@@ -975,6 +1110,7 @@ pub async fn guided_turn(
             tokio::spawn(async move {
                 let result = provider
                     .structured_validated::<MechanicsOut, _>(
+                        RunContext::new(ontology::op::EXPLAIN, Some(turn_id)),
                         &mechanics_msgs,
                         0.4,
                         "MechanicsOut",
@@ -1003,6 +1139,7 @@ pub async fn guided_turn(
             tokio::spawn(async move {
                 let result = provider
                     .structured_validated::<ScaffoldsOut, _>(
+                        RunContext::new(ontology::op::SUGGEST, Some(turn_id)),
                         &scaffolds_msgs,
                         0.6,
                         "ScaffoldsOut",
@@ -1037,40 +1174,6 @@ pub async fn guided_turn(
             })
         };
 
-        let learner_tokens_task = {
-            let provider = Provider::openrouter(&worker_key, &worker_model);
-            let channel = analysis_channel.clone();
-            let learner_msgs = vec![
-                json!({"role": "system", "content": prompts::learner_tokens_prompt(&tln, &native)}),
-                json!({"role": "user", "content": format!("Learner message to analyze:\n{}", learner_message)}),
-            ];
-            tokio::spawn(async move {
-                let result = provider
-                    .structured_validated::<LearnerTokensOut, _>(
-                        &learner_msgs,
-                        0.1,
-                        "LearnerTokensOut",
-                        false,
-                        |t: &LearnerTokensOut| {
-                            if t.tokens.is_empty() || t.translation.trim().is_empty() {
-                                Some("tokens and translation must not be empty".into())
-                            } else { None }
-                        },
-                    )
-                    .await;
-                if let Ok(out) = &result {
-                    let _ = channel.send(GuidedEvent::AnalysisSection {
-                        tokens: None,
-                        translation: None,
-                        user_tokens: Some(out.tokens.clone()),
-                        user_translation: Some(out.translation.clone()),
-                        mechanics: None,
-                        scaffolds: None,
-                    });
-                }
-                result
-            })
-        };
 
         let (tokens_out, translation_out, mechanics_out, scaffolds_out, user_tokens_out) = (
             tokens_task
@@ -1228,6 +1331,7 @@ pub async fn guided_turn(
             ];
             let result = provider
                 .structured_validated::<CoachFeedback, _>(
+                    RunContext::new(ontology::op::REVIEW, Some(turn_id)),
                     &messages,
                     0.3,
                     "CoachFeedback",
@@ -1376,7 +1480,12 @@ pub async fn coach_ask(
 
     let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
     let reply = provider
-        .chat_streaming(&messages, 0.5, &mut |_| {})
+        .chat_streaming(
+            RunContext::new(ontology::op::ANSWER, None),
+            &messages,
+            0.5,
+            &mut |_| {},
+        )
         .await
         .map_err(|e| format!("coach ask failed: {e}"))?;
     let reply = sanitize_reply(&reply);
@@ -1482,6 +1591,7 @@ pub async fn generate_scaffolds(
     let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
     let out = provider
         .structured_validated::<ScaffoldsOut, _>(
+            RunContext::new(ontology::op::SUGGEST, None),
             &messages,
             0.6,
             "ScaffoldsOut",
@@ -1552,6 +1662,7 @@ pub async fn word_insight(
     let provider = Provider::openrouter(&stored.openrouter_key, &stored.openrouter_model);
     provider
         .structured_validated::<WordInsight, _>(
+            RunContext::new(ontology::op::WORD_INSIGHT, None),
             &messages,
             0.2,
             "WordInsight",
@@ -1656,6 +1767,7 @@ pub async fn generate_story(
     let provider = Provider::openrouter(&settings.openrouter_key, &settings.openrouter_model);
     provider
         .structured_validated::<StoryResponse, _>(
+            RunContext::new(ontology::op::STORY, None),
             &messages,
             0.7,
             "StoryResponse",

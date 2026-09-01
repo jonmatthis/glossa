@@ -5,17 +5,38 @@
 // worker models and reports success, latency, time-to-first-token (reply),
 // and corrective-retry counts per call.
 
+use crate::ontology;
+use crate::trace::RunContext;
 use crate::ai::{Provider, HTTP_429_RETRY, PARSE_RETRY, VALIDATION_RETRY};
-use crate::commands::{MechanicsOut, ScaffoldsOut, StoryResponse, TokensOut, TranslationOut};
+use crate::commands::{
+    CoachFeedback, LearnerTokensOut, MechanicsOut, ScaffoldsOut, StoryResponse, TokensOut,
+    TranslationOut,
+};
+use crate::observer::{self, ObserverOutput, Profile, TeachingPlan};
 use crate::prompts;
 use std::time::{Duration, Instant};
 
+/// Candidates, cheapest/fastest first. Structured-output reliability is the
+/// gate: a model that cannot be trusted to fill a schema is unusable here no
+/// matter how cheap, because every surface in the app is schema-driven.
+///
+/// Set BENCH_MODELS to override, e.g.
+///   BENCH_MODELS="a/b,c/d" cargo test model_bench -- --ignored --nocapture
 const CANDIDATES: &[&str] = &[
-    "openai/gpt-5-nano",
-    "google/gemini-3.1-flash-lite",
-    "google/gemini-3.5-flash-lite",
     "google/gemini-2.5-flash",
+    "google/gemini-3.5-flash-lite",
+    "google/gemini-3.1-flash-lite",
+    "openai/gpt-5-nano",
 ];
+
+fn candidates() -> Vec<String> {
+    match std::env::var("BENCH_MODELS") {
+        Ok(v) if !v.trim().is_empty() => {
+            v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        }
+        _ => CANDIDATES.iter().map(|s| s.to_string()).collect(),
+    }
+}
 
 /// The greeting reply that historically triggered repetition loops.
 const LOOP_BAIT_REPLY: &str = "¡Hola! ¿Qué tal estás hoy?";
@@ -62,12 +83,13 @@ async fn model_bench() {
     let tln = "Spanish";
     let native = "English";
 
-    for model in CANDIDATES {
+    for model in candidates() {
+        let model = model.as_str();
         let provider = Provider::openrouter(&key, model);
         eprintln!("\n================ {} ================", model);
 
         // 1. Streaming greeting reply (TTFT + total).
-        let sys = prompts::guided_reply_prompt("es-ES", tln, "A2", native, "", "");
+        let sys = prompts::guided_reply_prompt(tln, "A2", native, "");
         let messages = vec![
             serde_json::json!({"role": "system", "content": sys}),
             serde_json::json!({"role": "user", "content": "[Session start] Greet the learner warmly and ask one simple opening question they can answer at their level."}),
@@ -82,7 +104,12 @@ async fn model_bench() {
         };
         let before = snapshot();
         let reply = provider
-            .chat_streaming(&messages, 0.6, &mut on_delta)
+            .chat_streaming(
+                RunContext::new(ontology::op::REPLY, None),
+                &messages,
+                0.6,
+                &mut on_delta,
+            )
             .await;
         let ms = start.elapsed().as_millis();
         match &reply {
@@ -96,13 +123,14 @@ async fn model_bench() {
 
         // 2. Tokens — on the loop bait.
         let msgs = vec![
-            serde_json::json!({"role": "system", "content": prompts::guided_tokens_prompt(tln, native)}),
+            serde_json::json!({"role": "system", "content": prompts::guided_tokens_prompt(tln, native, None)}),
             serde_json::json!({"role": "user", "content": format!("Tutor reply to tokenize:\n{}", reply_text)}),
         ];
         let start = Instant::now();
         let before = snapshot();
         let res = provider
             .structured_validated::<TokensOut, _>(
+                RunContext::new(ontology::op::TOKENIZE, None),
                 &msgs,
                 0.1,
                 "TokensOut",
@@ -127,6 +155,7 @@ async fn model_bench() {
         let before = snapshot();
         let res = provider
             .structured_validated::<ScaffoldsOut, _>(
+                RunContext::new(ontology::op::SUGGEST, None),
                 &msgs,
                 0.6,
                 "ScaffoldsOut",
@@ -155,6 +184,7 @@ async fn model_bench() {
         let before = snapshot();
         let res = provider
             .structured_validated::<TranslationOut, _>(
+                RunContext::new(ontology::op::TRANSLATE, None),
                 &msgs,
                 0.2,
                 "TranslationOut",
@@ -179,6 +209,7 @@ async fn model_bench() {
         let before = snapshot();
         let res = provider
             .structured_validated::<MechanicsOut, _>(
+                RunContext::new(ontology::op::EXPLAIN, None),
                 &msgs,
                 0.4,
                 "MechanicsOut",
@@ -204,6 +235,7 @@ async fn model_bench() {
         let before = snapshot();
         let res = provider
             .structured_validated::<StoryResponse, _>(
+                RunContext::new(ontology::op::STORY, None),
                 &msgs,
                 0.7,
                 "StoryResponse",
@@ -227,6 +259,91 @@ async fn model_bench() {
             }
             Err(e) => eprintln!("story        FAIL ({}ms): {}", ms, &e[..e.len().min(160)]),
         }
+
+        // 7. Learner tokens — the call that hit the old 6000-token cap.
+        let sys = prompts::learner_tokens_prompt(tln, native, None);
+        let msgs = vec![
+            serde_json::json!({"role": "system", "content": sys}),
+            serde_json::json!({"role": "user", "content": "Learner message to analyze:
+Si, me gusta mucho viajar. Quiero ir a la playa con mi familia el proximo verano porque me encanta el mar."}),
+        ];
+        let start = Instant::now();
+        let before = snapshot();
+        let res = provider
+            .structured_validated::<LearnerTokensOut, _>(
+                RunContext::new(ontology::op::TOKENIZE_LEARNER, None),
+                &msgs,
+                0.1,
+                "LearnerTokensOut",
+                false,
+                |t: &LearnerTokensOut| {
+                    if t.tokens.is_empty() { Some("empty".into()) } else { None }
+                },
+            )
+            .await;
+        let ms = start.elapsed().as_millis();
+        match &res {
+            Ok(t) => eprintln!("learner-tok  OK  total={}ms retries={} n={}", ms, retry_delta(before), t.tokens.len()),
+            Err(e) => eprintln!("learner-tok  FAIL ({}ms): {}", ms, &e[..e.len().min(160)]),
+        }
+
+        // 8. Coach feedback — nested array of correction objects.
+        let sys = prompts::coach_system_prompt(tln, native);
+        let msgs = vec![
+            serde_json::json!({"role": "system", "content": sys}),
+            serde_json::json!({"role": "user", "content": "Learner wrote: 'Si, me gusta mucho viajar. ¿De dónde te gusta viajar tú?'"}),
+        ];
+        let start = Instant::now();
+        let before = snapshot();
+        let res = provider
+            .structured_validated::<CoachFeedback, _>(
+                RunContext::new(ontology::op::REVIEW, None),
+                &msgs,
+                0.3,
+                "CoachFeedback",
+                false,
+                |c: &CoachFeedback| c.validate(),
+            )
+            .await;
+        let ms = start.elapsed().as_millis();
+        match &res {
+            Ok(c) => eprintln!("coach        OK  total={}ms retries={} corrections={}", ms, retry_delta(before), c.corrections.len()),
+            Err(e) => eprintln!("coach        FAIL ({}ms): {}", ms, &e[..e.len().min(160)]),
+        }
+
+        // 9. Observer — THE hard case. Two levels of nesting, each with
+        //    arrays of objects. This is the schema that silently degraded to
+        //    a stringified blob when the `allOf` wrapper reached the provider,
+        //    so it is the one that decides whether a model is usable at all.
+        let plan = TeachingPlan::default();
+        let profile = Profile::default();
+        let transcript = "L: Hola
+T: ¡Hola! ¿Te gusta viajar?
+L: Si, me gusta mucho viajar.";
+        let start = Instant::now();
+        let before = snapshot();
+        let res = observer::run_observer(
+            &provider,
+            RunContext::new(ontology::op::REFLECT, None),
+            tln,
+            transcript,
+            &plan,
+            &profile,
+            &[],
+        )
+        .await;
+        let ms = start.elapsed().as_millis();
+        match &res {
+            Ok(o) => eprintln!(
+                "observer*    OK  total={}ms retries={} focus={} errors={}",
+                ms,
+                retry_delta(before),
+                o.plan.session_focus.len(),
+                o.plan.recurring_errors.len()
+            ),
+            Err(e) => eprintln!("observer*    FAIL ({}ms): {}", ms, &e[..e.len().min(200)]),
+        }
+        let _ = std::any::type_name::<ObserverOutput>();
 
         std::thread::sleep(Duration::from_secs(2));
     }

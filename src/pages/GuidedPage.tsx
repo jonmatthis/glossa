@@ -8,8 +8,9 @@ import type {
   Scaffolds,
   TeachingPlan,
 } from '../types'
+import { DevPanel } from '../components/dev/DevPanel'
 import { GlossPopup, type PopupState } from '../components/GlossPopup'
-import { getPlan, getSettings, isTauri, LANGUAGES } from '../lib/tauri'
+import { getPlan, getSettings, isTauri, languageFor, languages } from '../lib/tauri'
 import { openOverlay } from '../lib/back'
 import {
   isSpeaking,
@@ -434,26 +435,22 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
 
   // Romanization shows for targets whose script needs it (Arabic → ALA-LC).
   const showRomanization =
-    settings != null &&
-    (LANGUAGES.find((l) => l.code === settings.target_language)?.romanization ??
-      null) !== null
+    settings != null && languageFor(settings.target_language)?.romanization != null
 
   // RTL targets render token lines right-to-left.
   const rtl =
-    settings != null &&
-    (LANGUAGES.find((l) => l.code === settings.target_language)?.direction ??
-      'ltr') === 'rtl'
+    settings != null && languageFor(settings.target_language)?.direction === 'rtl'
 
   // Romanization visibility: "always" setting OR a revealed token.
   const alwaysRomanize = settings?.always_romanize ?? false
 
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
-    ? (LANGUAGES.find((l) => l.code === settings.target_language)?.name ??
+    ? (languageFor(settings.target_language)?.endonym ??
        settings.target_language.split('-')[0].toUpperCase())
     : ''
   const nativeLanguageName = settings
-    ? (LANGUAGES.find((l) => l.base === settings.native_language)?.name ??
+    ? (languages().find((l) => l.base === settings.native_language)?.endonym ??
        settings.native_language.toUpperCase())
     : ''
 
@@ -635,9 +632,14 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= 860
   )
-  const [mobileSurface, setMobileSurface] = useState<'chat' | 'panel'>('chat')
+  // Three surfaces on mobile, in this order. The dev panel is the last one
+  // deliberately: it is the deepest rung of the disclosure ladder, always
+  // reachable but never in the way.
+  const MOBILE_SURFACES = ['chat', 'panel', 'dev'] as const
+  type MobileSurface = (typeof MOBILE_SURFACES)[number]
+  const [mobileSurface, setMobileSurface] = useState<MobileSurface>('chat')
 
-  // Horizontal swipe switches surfaces on mobile. Only claims gestures that
+  // Horizontal swipe walks the surfaces on mobile. Only claims gestures that
   // are clearly horizontal (>|dx|, >2x|dy|, <600ms) so vertical chat
   // scrolling and drag-to-reveal are untouched.
   const swipe = useRef<{ x: number; y: number; t: number } | null>(null)
@@ -653,8 +655,11 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     const dy = e.changedTouches[0].clientY - s.y
     if (Date.now() - s.t > 600) return
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return
-    if (dx < 0 && mobileSurface === 'chat') setMobileSurface('panel')
-    if (dx > 0 && mobileSurface === 'panel') setMobileSurface('chat')
+    const i = MOBILE_SURFACES.indexOf(mobileSurface)
+    const next = dx < 0 ? i + 1 : i - 1
+    if (next >= 0 && next < MOBILE_SURFACES.length) {
+      setMobileSurface(MOBILE_SURFACES[next])
+    }
   }
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 860px)')
@@ -869,26 +874,37 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
         />
       </section>
 
+      {/* The dev surface: the same DevPanel as the desktop dock and the
+          popped-out window, here as the third swipe surface. */}
+      {isMobile && (
+        <section
+          className={`dev-surface ${mobileSurface !== 'dev' ? 'mobile-hidden' : ''}`}
+        >
+          <DevPanel />
+        </section>
+      )}
+
       {/* Mobile bottom navigation: switch surfaces instead of stacking them */}
       {isMobile && (
         <nav className="mobile-nav">
-          <button
-            type="button"
-            className={`mobile-nav-item ${mobileSurface === 'chat' ? 'active' : ''}`}
-            onClick={() => setMobileSurface('chat')}
-          >
-            💬 Chat
-          </button>
-          <button
-            type="button"
-            className={`mobile-nav-item ${mobileSurface === 'panel' ? 'active' : ''}`}
-            onClick={() => setMobileSurface('panel')}
-          >
-            🎓 Coach
-          </button>
+          {(
+            [
+              ['chat', '💬', 'Chat'],
+              ['panel', '🎓', 'Coach'],
+              ['dev', '💭', 'Inside'],
+            ] as [MobileSurface, string, string][]
+          ).map(([id, icon, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`mobile-nav-item ${mobileSurface === id ? 'active' : ''}`}
+              onClick={() => setMobileSurface(id)}
+            >
+              {icon} {label}
+            </button>
+          ))}
         </nav>
-      )
-      }
+      )}
 
       {/* ── Plan & Profile drawer (fully observable) ──────────────────── */}
       {planOpen && (

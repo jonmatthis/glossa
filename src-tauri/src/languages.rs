@@ -91,6 +91,45 @@ pub const LANGUAGES: &[Language] = &[
     },
 ];
 
+/// The registry as the webview sees it. Mirrors `Language` with dialects
+/// flattened into objects — `src/lib/tauri.ts` renders straight from this,
+/// so there is exactly ONE language table in the codebase.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LanguageInfo {
+    pub code: &'static str,
+    pub base: &'static str,
+    pub name: &'static str,
+    pub endonym: &'static str,
+    pub direction: &'static str,
+    pub romanization: Option<&'static str>,
+    pub dialects: Vec<DialectInfo>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DialectInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+pub fn registry() -> Vec<LanguageInfo> {
+    LANGUAGES
+        .iter()
+        .map(|l| LanguageInfo {
+            code: l.code,
+            base: l.base,
+            name: l.name,
+            endonym: l.endonym,
+            direction: l.direction,
+            romanization: l.romanization,
+            dialects: l
+                .dialects
+                .iter()
+                .map(|(id, label)| DialectInfo { id, label })
+                .collect(),
+        })
+        .collect()
+}
+
 /// Display name for a language code — exact BCP-47 match first, then base
 /// match, else the code itself.
 pub fn language_display(code: &str) -> String {
@@ -124,26 +163,35 @@ pub fn overlay(code: &str, dialect: Option<&str>) -> String {
     let Some(lang) = LANGUAGES.iter().find(|l| l.code == code) else {
         return String::new()
     };
+    // A dialect the preset list does not know is NOT an error: the picker
+    // accepts free text ("Andaluz", "Chilean"), and the learner's own words
+    // are a perfectly good instruction to the model. `dialect_display`
+    // resolves a known id to its label and passes anything else through
+    // verbatim — so a custom variety steers the prompt exactly like a preset.
     let dialect_line = dialect
+        .filter(|d| !d.trim().is_empty())
         .map(|d| {
-            dialects(code)
-                .iter()
-                .find(|(id, _)| *id == d)
-                .map(|(_, label)| {
-                    format!(
-                        "- DIALECT: use the {label} variety of {name} - vocabulary, \
-                         pronunciation, and phrasing specific to that region.",
-                        name = lang.name
-                    )
-                })
-                .unwrap_or_default()
+            format!(
+                "- DIALECT: use the {label} variety of {name} - vocabulary, \
+                 pronunciation, and phrasing specific to that region.",
+                label = dialect_display(code, d),
+                name = lang.name
+            )
         })
         .unwrap_or_default();
     lang.overlay.replace("{dialect}", &dialect_line)
 }
 
-/// Target-language guidance injected into every prompt when this language
-/// is the target.
+/// Romanization scheme for a language code ("ALA-LC"), or None for
+/// Latin-script languages. Drives the `romanization` instruction in the
+/// tokenization prompts — the scheme lives here, never in prompt text.
+pub fn romanization(code: &str) -> Option<&'static str> {
+    LANGUAGES
+        .iter()
+        .find(|l| l.code == code || l.base == code.split('-').next().unwrap_or(code))
+        .and_then(|l| l.romanization)
+}
+
 /// Dialects for a language code: (id, display label). Empty for unknown.
 pub fn dialects(code: &str) -> &[(&'static str, &'static str)] {
     LANGUAGES

@@ -7,7 +7,7 @@ import {
   logWarn,
   saveSettings,
   validateKey,
-  LANGUAGES,
+  languages,
 } from '../lib/tauri'
 import { comboFromEvent, SHORTCUT_DEFAULTS, type ShortcutAction } from '../lib/keyboard'
 import { DialectField } from './DialectField'
@@ -358,9 +358,9 @@ export function SettingsModal({
               setSettings({ ...settings, target_language: e.target.value, target_dialect: '' })
             }}
           >
-            {LANGUAGES.map((l) => (
+            {languages().map((l) => (
               <option key={l.code} value={l.code}>
-                {l.name}
+                {l.endonym}
               </option>
             ))}
           </select>
@@ -376,7 +376,7 @@ export function SettingsModal({
           <label>Regional variety</label>
           <DialectField
             presets={
-              LANGUAGES.find((l) => l.code === settings.target_language)?.dialects ?? []
+              languages().find((l) => l.code === settings.target_language)?.dialects ?? []
             }
             value={settings.target_dialect}
             onChange={(v) => setSettings({ ...settings, target_dialect: v })}
@@ -395,9 +395,9 @@ export function SettingsModal({
             value={settings.native_language}
             onChange={(e) => setSettings({ ...settings, native_language: e.target.value })}
           >
-            {LANGUAGES.map((l) => (
+            {languages().map((l) => (
               <option key={l.base} value={l.base}>
-                {l.name}
+                {l.endonym}
               </option>
             ))}
           </select>
