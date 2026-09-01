@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 // Conversation steering: level feeds the CEFR in every prompt; topic steers
 // the conversation when natural. Persisted per device.
 export const STEER_LEVELS = [
+  { value: 'zero', label: 'Absolute zero', cefr: 'PRE-A1' },
   { value: 'beginner', label: 'Beginner', cefr: 'A2' },
   { value: 'intermediate', label: 'Intermediate', cefr: 'B1' },
   { value: 'advanced', label: 'Advanced', cefr: 'C1' },

@@ -27,7 +27,7 @@ commit"; the whole app tree is untracked).
 |---|---|
 | Guided conversation with streaming replies | `commands.rs::guided_turn`, `GuidedPage.requestTurn` |
 | Async analysis (reply + LEARNER tokens/translation, mechanics, scaffolds) with per-section degradation | `commands.rs` analysis spawn |
-| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar (any dialect), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language; **dialect = preset dropdown + free-text combobox** injected into every prompt | `languages.rs`, `commands.rs::save_settings`, `components/DialectField.tsx`, `GuidedPage` pair-change effect |
+| **Language pair switching** — en-US ⇄ fr-FR ⇄ es-ES ⇄ ar (any dialect), any native language; documents archived on switch; full conversation reset + fresh greeting in the new language; **dialect = preset dropdown + free-text combobox** injected into every prompt; **Absolute zero level** (PRE-A1) with true-beginner survival mode | `languages.rs`, `commands.rs::save_settings`, `components/DialectField.tsx`, `prompts.rs::persona_block`, `GuidedPage` pair-change effect |
 | **Arabic (Levantine)** — RTL script, ALA-LC romanization alongside glosses (skellysubs IP), unvocalized typing convention; Whisper gets a target-language-only context hint (recent turns) because hint language leaks into transcripts; RTL token rendering via `row-reverse` lines (flex order overrides bidi) | `languages.rs` (direction + romanization fields), `GuidedToken.romanization`, `transcribe_audio(prompt)`, `.rtl-line`/`.wroman` UI |
 | **Unified right panel** — Coach / Analysis tabs (one pane, both views); coach thread persists inside the Coach tab; analysis Q&A chat removed | `components/panes/CoachAnalysisPanel.tsx` |
 | **Mobile mode = window mode** — window below 860px switches to tabbed single-surface layout (bottom nav: Chat ⇄ Coach/Analysis); desktop shrinks into it for testing | `GuidedPage` matchMedia effect, `.mobile-nav` |
@@ -47,9 +47,11 @@ commit"; the whole app tree is untracked).
 
 Ranked roughly by "will bite us next."
 
-### R1 · CEFR hard-coding — **coarse picker SHIPPED, adaptive remains open**
-The steer row (level picker) feeds beginner/intermediate/advanced →
-A2/B1/C1 into every prompt. Fine-grained/adaptive leveling (driven by
+### R1 · CEFR handling — **SHIPPED including PRE-A1, adaptive remains open**
+The steer row offers Absolute zero (PRE-A1) → A2/B1/C1 into every prompt.
+PRE-A1 activates a true-beginner survival mode in the persona: one new
+phrase per reply, modeled answers, sub-six-word sentences, a 1-10 counting
+and greetings core. Fine-grained/adaptive leveling (driven by
 `Profile.level_notes` evidence) remains future work.
 
 ### R2 · Contract drift: TS `Settings` missing `observer_model` — **FIXED**
@@ -79,11 +81,25 @@ resets the conversation (turns, reveals, Q&A, coach thread) and fires a
 fresh greeting in the new language. Archived files keep every old document
 recoverable. Full multi-profile (instant switch-back) remains future work.
 
-### R7 · Observer cadence & counters — **partially fixed**
-- `learner_turns` dead counter: **removed**.
-- `Profile.sessions` still never incremented (observer prompt doesn't ask).
-- Cadence: observer runs **every turn**, non-overlapping (comment/code
-  now aligned here and in docs).
+### R7 · Observer cadence & architecture — **audited Aug 31, healthy**
+
+Verdict from the observer-thread interrogation: the observer is **alive and
+not subsumed by the coach**. It runs every turn (non-overlapping, panic-safe
+RAII guard), rewrites plan.json/profile.json, and its output feeds the
+worker prompts via `directives_block` — including the newly chained dialect
+overlay. The coach has *partially* superseded it (coach corrections will
+feed the recast queue at bite 2, replacing the observer's error tracking),
+but the observer still owns: session focus, recycle vocab, overload guard,
+taught-ledger, and the Profile document. Known staleness vector: observer
+model latency (up to ~2min for reasoning models) means the plan trails the
+conversation by up to one turn by design — not a bug. The `learner_turns`
+counter is dead (removed); `Profile.sessions` still never increments.
+
+Watch-list: steering changes now fire both a scaffold regeneration and a
+partner message; the steering effect is gated on settings load so the
+greeting (which carries level/topic) is the first steered message and the
+first settle never double-sends. Verified Aug 31 — double-greeting on cold
+open fixed.
 
 ### R8 · `features` is dead weight — **REMOVED**
 Field deleted from the Rust wire type, TS type, and the "Grammar spotted"

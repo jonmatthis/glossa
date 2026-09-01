@@ -638,6 +638,7 @@ pub async fn guided_turn(
         overlay(&target, Some(settings.target_dialect.as_str()));
     // Learner-selected level (steer row) maps to CEFR for every prompt.
     let cefr = match level.as_deref() {
+        Some("zero") => "PRE-A1",
         Some("intermediate") => "B1",
         Some("advanced") => "C1",
         _ => "A2",
@@ -681,9 +682,22 @@ pub async fn guided_turn(
         reply_messages.push(json!({"role": turn.role, "content": turn.content}));
     }
     if greeting {
+        // The greeting must respect the learner's saved level and topic —
+        // it is the FIRST message of a steered conversation, not a generic
+        // hello that the steering pass then has to correct.
+        let topic_line = match topic.as_deref() {
+            Some(t) if !t.trim().is_empty() => format!(
+                " The conversation topic is {t}: work the greeting and your \
+                 opening question around that topic."
+            ),
+            _ => String::new(),
+        };
         reply_messages.push(json!({
             "role": "user",
-            "content": "[Session start] Greet the learner warmly and ask one simple opening question they can answer at their level."
+            "content": format!(
+                "[Session start] Greet the learner warmly and ask one simple \
+                 opening question they can answer at their level.{topic_line}"
+            )
         }));
     } else if let Some(change) = steering.as_deref().filter(|s| !s.trim().is_empty()) {
         // Learner changed practice settings mid-conversation: the partner
@@ -761,7 +775,15 @@ pub async fn guided_turn(
             .map(|t| format!("{}: {}", if t.role == "user" { "L" } else { "T" }, t.content))
             .chain(std::iter::once(format!(
                 "L: {}",
-                if greeting { "(session start)".to_string() } else { message.trim().to_string() }
+                if greeting {
+                    "(session start)".to_string()
+                } else if let Some(change) =
+                    steering.as_deref().filter(|s| !s.trim().is_empty())
+                {
+                    format!("(changed practice settings: {change})")
+                } else {
+                    message.trim().to_string()
+                }
             )))
             .chain(std::iter::once(format!("T: {reply}")))
             .collect();

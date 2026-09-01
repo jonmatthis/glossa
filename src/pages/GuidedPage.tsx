@@ -157,19 +157,9 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       setTtsReady(v.length > 0 || speechSupported())
       if (!v.length) logWarn('[tts] no OS voices found — speech disabled')
     })
-    // Greeting fires once per module session; a new session also clears the
+    // Greeting fires once settings are loaded — it must include the saved
+    // level/topic, so it waits for `settings`. A new session also clears the
     // coach thread. Skips if a turn already exists (HMR remount safety).
-    if (isTauri && armGreeting() && turnsRef.current.length === 0) {
-      logInfo('[guided] firing greeting turn')
-      void requestTurn({ greeting: true })
-      void invoke('coach_thread_clear').catch((e: unknown) =>
-        logWarn('[coach] thread reset failed:', e)
-      )
-      // Panel holds its own thread state; nudge it to reload the emptied thread.
-      setThreadReload((v) => v + 1)
-      setRevealed(new Set())
-      setFreshScaffolds(null)
-    }
     void getSettings()
       .then((s) => {
         setSettings(s)
@@ -180,6 +170,16 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
           openrouterKey: s.openrouter_key ? 'set' : 'MISSING',
           groqKey: s.groq_key ? 'set' : 'MISSING',
         })
+        if (isTauri && armGreeting() && turnsRef.current.length === 0) {
+          logInfo('[guided] firing greeting turn')
+          void requestTurn({ greeting: true })
+          void invoke('coach_thread_clear').catch((e: unknown) =>
+            logWarn('[coach] thread reset failed:', e)
+          )
+          setThreadReload((v) => v + 1)
+          setRevealed(new Set())
+          setFreshScaffolds(null)
+        }
       })
       .catch((e) => logWarn('[guided] settings load failed:', e))
     void getPlan()
@@ -543,14 +543,21 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
     },
     []
   )
+  // Steering change: regenerate scaffolds AND have the partner re-open the
+  // conversation aligned to the new level/topic. Skips until settings have
+  // loaded AND the greeting has fired — the greeting itself is the first
+  // steered message, so the first settle here must not double-send. The
+  // first-run guard is only consumed AFTER settings load; a guard consumed
+  // while settings were absent would let the settingsLoaded transition fire
+  // a spurious steering turn on top of the greeting.
   const steerInitialized = useRef(false)
+  const settingsLoaded = settings !== null
   useEffect(() => {
+    if (!settingsLoaded) return
     if (!steerInitialized.current) {
       steerInitialized.current = true
       return
     }
-    // Steering change: regenerate scaffolds AND have the partner re-open the
-    // conversation aligned to the new level/topic.
     const t = setTimeout(() => {
       void regenerateScaffolds(steer.level, steer.topic)
       const change = [
@@ -562,7 +569,7 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
       void requestTurn({ message: '', steering: change })
     }, 300)
     return () => clearTimeout(t)
-  }, [steer.level, steer.topic, regenerateScaffolds, requestTurn])
+  }, [steer.level, steer.topic, regenerateScaffolds, requestTurn, settingsLoaded])
 
   // Chips: fresh steer-driven scaffolds win; otherwise the newest turn that
   // produced any (best-available across turns).

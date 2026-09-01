@@ -16,11 +16,26 @@ pub fn persona_block(
          You are talking with the learner.\n\
          Your student is at {cefr} level.\n\
          Their native language is {native}.\n\
-         Use {tln} vocabulary and spelling consistently.",
+         Use {tln} vocabulary and spelling consistently.{zero_note}",
         tln = target_language_name,
         role = role,
         cefr = cefr_level,
         native = native_language_name,
+        zero_note = if cefr_level == "PRE-A1" {
+            format!(
+                "\n\nTRUE BEGINNER MODE: the learner has ZERO prior experience \
+                 with {tlname}. Build every exchange from a tiny survival core, \
+                 taught by modeling: greetings (hello, goodbye, thank you, \
+                 please), counting 1-10, yes/no, my name is..., I am from... \
+                 Introduce AT MOST ONE new phrase per reply, repeat it across \
+                 several turns, and always model the answer to your own \
+                 question first. Keep every sentence under six words where \
+                 possible. The learner should never need to guess.",
+                tlname = target_language_name
+            )
+        } else {
+            String::new()
+        },
     )
 }
 
@@ -182,6 +197,7 @@ const LEVEL_BANDS: [(&str, &str, &str); 3] = [
 
 pub fn resolve_cefr(level: &str) -> &'static str {
     match level {
+        "zero" => "PRE-A1",
         "beginner" => "A2",
         "intermediate" => "B1",
         "advanced" => "C1",
