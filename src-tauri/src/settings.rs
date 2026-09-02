@@ -67,6 +67,10 @@ pub struct Settings {
     /// press-and-hold/tap insight). Default: only when revealed.
     #[serde(default)]
     pub always_romanize: bool,
+    /// Always show the native-language translation under each tutor reply,
+    /// instead of only on a punctuation tap.
+    #[serde(default)]
+    pub auto_translate: bool,
     /// Configurable keyboard shortcuts.
     #[serde(default)]
     pub shortcuts: Shortcuts,
@@ -172,6 +176,7 @@ impl Default for Settings {
             auto_speak: false,
             auto_send: false,
             always_romanize: false,
+            auto_translate: false,
             shortcuts: Shortcuts::default(),
             tts_engine: default_tts_engine(),
             tts_voice: default_tts_voice(),

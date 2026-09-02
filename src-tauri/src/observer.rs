@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
 
-use crate::ai::Provider;
+use crate::ai::{MaxTokens, Provider};
 
 // ─── Documents ───────────────────────────────────────────────────────────────
 
@@ -233,6 +233,11 @@ pub fn directives_block(plan: &TeachingPlan, recent_mechanics: &[String]) -> Str
     lines.join("\n")
 }
 
+/// Cheap failure budget. Both documents are a few hundred tokens; 4k is
+/// generous. The point is not to constrain the output but to make a runaway
+/// CHEAP — it dies in ~10s instead of burning 32k tokens over two minutes.
+const OBSERVER_MAX_TOKENS: MaxTokens = MaxTokens(4_000);
+
 /// The observer runs as **two separate structured calls**, one per document.
 ///
 /// It used to be one call returning `{plan, profile}` — two levels of nesting,
@@ -351,6 +356,7 @@ Rewrite the learner profile now.")}),
             0.4,
             "TeachingPlan",
             false,
+            Some(OBSERVER_MAX_TOKENS),
             |p: &TeachingPlan| p.validate(),
         ),
         provider.structured_validated::<Profile, _>(
@@ -359,6 +365,7 @@ Rewrite the learner profile now.")}),
             0.4,
             "Profile",
             false,
+            Some(OBSERVER_MAX_TOKENS),
             |_: &Profile| None,
         ),
     );

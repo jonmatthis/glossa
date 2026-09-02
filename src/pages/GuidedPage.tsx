@@ -10,7 +10,14 @@ import type {
 } from '../types'
 import { DevPanel } from '../components/dev/DevPanel'
 import { GlossPopup, type PopupState } from '../components/GlossPopup'
-import { getPlan, getSettings, isTauri, languageFor, languages } from '../lib/tauri'
+import {
+  getPlan,
+  getSettings,
+  isTauri,
+  languageFor,
+  languages,
+  saveSettings,
+} from '../lib/tauri'
 import { openOverlay } from '../lib/back'
 import {
   isSpeaking,
@@ -444,6 +451,25 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   // Romanization visibility: "always" setting OR a revealed token.
   const alwaysRomanize = settings?.always_romanize ?? false
 
+  /// Toggle a boolean setting from the composer's quick row.
+  ///
+  /// This is the SAME record the Settings modal edits — Rust's `Settings` is
+  /// the single source of truth. We patch optimistically for responsiveness
+  /// and persist immediately; the modal re-reads on open, so the two surfaces
+  /// cannot drift. Duplicating this into local component state is exactly the
+  /// bug to avoid.
+  const toggleSetting = useCallback(
+    (key: 'auto_speak' | 'auto_send' | 'always_romanize' | 'auto_translate') => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, [key]: !prev[key] }
+        void saveSettings(next).catch((e) => logError('[settings] quick toggle failed:', e))
+        return next
+      })
+    },
+    []
+  )
+
   // Display name from the shared language list — no ad-hoc mapping.
   const targetLanguageName = settings
     ? (languageFor(settings.target_language)?.endonym ??
@@ -548,13 +574,23 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
   // while settings were absent would let the settingsLoaded transition fire
   // a spurious steering turn on top of the greeting.
   const steerInitialized = useRef(false)
+  const lastSteer = useRef<string | null>(null)
   const settingsLoaded = settings !== null
   useEffect(() => {
     if (!settingsLoaded) return
+    const key = `${steer.level}|${steer.topic}`
     if (!steerInitialized.current) {
       steerInitialized.current = true
+      lastSteer.current = key
       return
     }
+    // The effect also re-runs when `requestTurn` changes identity — and it
+    // does that whenever the language changes, because `speakReply` is one of
+    // its deps. That fired a steering turn straight after the post-switch
+    // greeting, which is the "it doubles the first message" bug. React to the
+    // VALUES, not to callback identity.
+    if (lastSteer.current === key) return
+    lastSteer.current = key
     const t = setTimeout(() => {
       void regenerateScaffolds(steer.level, steer.topic)
       const change = [
@@ -702,7 +738,9 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
               ttsReady={ttsReady}
               speaking={speaking}
               revealed={revealed}
-              showRomanization={showRomanization || alwaysRomanize}
+              showRomanization={showRomanization}
+              alwaysRomanize={alwaysRomanize}
+              autoTranslate={settings?.auto_translate ?? false}
               rtl={rtl}
               onReveal={onReveal}
               onBubbleTap={onBubbleTap}
@@ -743,6 +781,36 @@ export default function GuidedPage({ settingsVersion = 0 }: { settingsVersion?: 
                 <ScaffoldRow label="Say it" items={chipsForUI.replies} onPick={(s) => void send(s)} />
                 <ScaffoldRow label="Build it" items={chipsForUI.frames} onPick={(f) => setInput(f)} />
                 <ScaffoldRow label="Start it" items={chipsForUI.starters} onPick={(s) => setInput(`${s} `)} />
+                {/* The same Settings record the modal edits — Rust owns it,
+                    these are a second VIEW of one variable, not a copy. */}
+                <div className="quick-toggles" role="group" aria-label="Reading and voice options">
+                  {(
+                    [
+                      ['auto_speak', 'Read aloud', 'Speak each reply automatically'],
+                      ['auto_send', 'Auto-send voice', 'Send speech transcriptions immediately'],
+                      ['auto_translate', 'Show translation', 'Always show the translation under each reply'],
+                      ...(showRomanization
+                        ? ([['always_romanize', 'Show romanization', 'Always show romanization under each word']] as const)
+                        : []),
+                    ] as [
+                      'auto_speak' | 'auto_send' | 'auto_translate' | 'always_romanize',
+                      string,
+                      string,
+                    ][]
+                  ).map(([key, label, title]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`quick-toggle ${settings?.[key] ? 'on' : ''}`}
+                      onClick={() => toggleSetting(key)}
+                      aria-pressed={settings?.[key] ?? false}
+                      title={title}
+                      disabled={!settings}
+                    >
+                      {settings?.[key] ? '☑' : '☐'} {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

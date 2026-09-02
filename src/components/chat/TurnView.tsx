@@ -29,6 +29,7 @@ interface TokenSpanProps {
   revealed: boolean
   hasTranslation: boolean
   showRomanization: boolean
+  alwaysRomanize: boolean
   onTap: (e: React.MouseEvent<HTMLSpanElement>) => void
   onDragStart: () => void
   onDragOver: () => void
@@ -41,6 +42,7 @@ function TokenSpan({
   revealed,
   hasTranslation,
   showRomanization,
+  alwaysRomanize,
   onTap,
   onDragStart,
   onDragOver,
@@ -105,7 +107,9 @@ function TokenSpan({
         {tok.text}
       </span>
       {revealed && tok.gloss && <span className="wg">{tok.gloss}</span>}
-      {revealed && showRomanization && tok.romanization && (
+      {/* `alwaysRomanize` must bypass `revealed` — gating both on reveal is
+          what made the "always show romanization" setting do nothing. */}
+      {(revealed || alwaysRomanize) && showRomanization && tok.romanization && (
         <span className="wroman">{tok.romanization}</span>
       )}
     </span>
@@ -119,6 +123,8 @@ export interface TurnViewProps {
   speaking: boolean
   revealed: Set<string>
   showRomanization: boolean
+  alwaysRomanize: boolean
+  autoTranslate: boolean
   rtl: boolean
   onReveal: (keys: string[]) => void
   onBubbleTap: (id: number) => void
@@ -138,6 +144,8 @@ export const TurnView = memo(function TurnView({
   speaking,
   revealed,
   showRomanization,
+  alwaysRomanize,
+  autoTranslate,
   rtl,
   onReveal,
   onBubbleTap,
@@ -226,6 +234,7 @@ export const TurnView = memo(function TurnView({
             revealed={isRevealed}
             hasTranslation={!!translation}
             showRomanization={showRomanization}
+            alwaysRomanize={alwaysRomanize}
             onTap={(e) => tokenTap(tok, si, translation, e)}
             onDragStart={() => beginDrag(turnId, gi)}
             onDragOver={() => dragOver(turnId, gi)}
@@ -281,6 +290,11 @@ export const TurnView = memo(function TurnView({
             )
           ) : (
             assistant.reply
+          )}
+          {/* Auto-translate shows the reply's translation without a tap; the
+              per-sentence tap still works on top of it. */}
+          {autoTranslate && assistant.translation && (
+            <div className="trans">{assistant.translation}</div>
           )}
           {ttsReady && (
             <button

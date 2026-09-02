@@ -523,6 +523,23 @@ export function SettingsModal({
         </div>
       ),
     },
+    auto_translate: {
+      section: 'voice',
+      label: L('auto_translate', 'Always show translation'),
+      kw: 'translation always show native meaning under reply',
+      node: (
+        <div className="form-row check-row">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={settings.auto_translate}
+              onChange={(e) => setSettings({ ...settings, auto_translate: e.target.checked })}
+            />
+            <span>Always show the translation under each reply</span>
+          </label>
+        </div>
+      ),
+    },
   }
   for (const sr of SHORTCUT_ROWS) {
     rows[`shortcut_${sr.action}`] = {

@@ -3,6 +3,7 @@ import { invoke, isTauri } from '../../lib/tauri'
 import { logError, logWarn } from '../../lib/log'
 import { CoachFeed } from './CoachFeed'
 import { AnalysisContent, type InspectTarget } from './AnalysisContent'
+import { usePersistentToggle } from '../../hooks/useSteering'
 
 interface CoachTurn {
   user: string | null
@@ -50,6 +51,12 @@ export function CoachAnalysisPanel({
   buildCoachContext: () => string
 }) {
   const [tab, setTab] = useState<'coach' | 'analysis'>('coach')
+  // The thread competes for height with the per-message coach feed; collapse
+  // it and the feedback stays readable on a short pane.
+  const { open: threadOpen, toggle: toggleThread } = usePersistentToggle(
+    'glossa_coach_thread',
+    true
+  )
   const [thread, setThread] = useState<{ role: string; content: string }[]>([])
   const [inputValue, setInputValue] = useState('')
   const [thinking, setThinking] = useState(false)
@@ -113,14 +120,27 @@ export function CoachAnalysisPanel({
             targetLangCode={targetLangCode}
             nativeLangCode={nativeLangCode}
           />
-          <div className="coach-thread">
-            {thread.map((m, i) => (
-              <div key={i} className={`coach-msg ${m.role}`}>
-                {m.content}
-              </div>
-            ))}
-            {thinking && <div className="coach-msg coach">⟳ thinking…</div>}
+          <div className="coach-thread-head">
+            <span>your thread{thread.length > 0 ? ` · ${thread.length}` : ''}</span>
+            <button
+              type="button"
+              onClick={toggleThread}
+              aria-expanded={threadOpen}
+              title={threadOpen ? 'Hide the thread' : 'Show the thread'}
+            >
+              {threadOpen ? '▾' : '▸'}
+            </button>
           </div>
+          {threadOpen && (
+            <div className="coach-thread">
+              {thread.map((m, i) => (
+                <div key={i} className={`coach-msg ${m.role}`}>
+                  {m.content}
+                </div>
+              ))}
+              {thinking && <div className="coach-msg coach">⟳ thinking…</div>}
+            </div>
+          )}
           <form
             className="coach-input-row"
             onSubmit={(e) => {

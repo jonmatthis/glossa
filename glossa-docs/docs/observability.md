@@ -430,23 +430,59 @@ observer was failing in production, because it never tested the observer.
 hygiene layer**, and every rule in it exists because a real call failed
 without it.
 
-### What is still not bulletproof
+### The fourth bug — and the one that mattered
 
-After all three fixes the observer schemas still run away on roughly **1 call
-in 4**, and in one bench cycle *both* candidate models failed simultaneously.
-Simultaneous failure across different models points at the endpoint, not the
-schema — and OpenRouter documents exactly this:
+The three fixes above helped and the failure rate stayed at roughly **1 call
+in 4**. Simultaneous failures across different models looked like an endpoint
+problem. It was not. It was one missing array.
 
-> enforcement varies by provider: some guarantee schema-conforming output,
-> while others translate your schema into their own structured-output format
-> **or treat it as a strong hint**.
+`schemars` omits any `#[serde(default)]` field from `required`. Every field of
+`TeachingPlan` and `Profile` is defaulted, so they shipped with **no `required`
+array at all**:
 
-We already send `provider: {require_parameters: true}`, which is the strongest
-generic guard available; there is **no capability filter for enforcement
-quality**. The remaining lever is pinning `provider.order` / `provider.only`
-to specific provider slugs known to hard-enforce schemas.
+```
+plan keys: ['description', 'properties', 'type']   # no "required"
+```
 
-**This is unresolved and should be treated as the top reliability risk.**
+That schema says *"an object which may contain any of these properties, or
+none"* — with no `additionalProperties: false` and no `strict`. Nothing in
+that grammar obliges the model to close the object or to stop emitting.
+`TokensOut` and `ScaffoldsOut` have no defaults, are fully required, and had
+never failed once. The correlation was exact.
+
+**Fix: emit the strict subset for every schema** — `additionalProperties:
+false`, every property in `required`, and `strict: true` on the request.
+`Option<T>` already arrives as `["string","null"]`, so requiring it costs
+nothing: `null` is a legal answer.
+
+| | before | after |
+|---|---|---|
+| observer, 5 repeats × 2 models | 25% runaway, 70–140s | **10/10 clean, 1.2–3.0s** |
+| full bench, all 9 schemas × 2 models | observer failing | **18/18 clean, zero retries** |
+
+### Required must not mean invented
+
+Making every field required creates a new hazard: a model with nothing to say
+will pad, guess, or stall. So every structured prompt carries
+`prompts::no_information_rule` — one sanctioned answer per shape:
+
+- a field that accepts null → `null`
+- a list with nothing to put in it → `[]` (and *do not pad it*)
+- a required text field → the literal `not applicable`
+- a required number → `0`
+
+with a final clause that a prompt's own explicit cardinality ("exactly two"
+scaffolds) **wins** over the empty-answer option, or the two instructions
+fight. `NOT_APPLICABLE` is filtered at render time so the sentinel never
+reaches the learner.
+
+### Residual risk
+
+Provider enforcement still varies per endpoint — OpenRouter documents that
+some providers "treat it as a strong hint" — and there is no capability
+filter for enforcement quality. `require_parameters: true` is the strongest
+generic guard and we send it. If runaway ever returns, pinning
+`provider.order` is the next lever. The bench is how you would find out.
 
 ### Why it fails cheaply now
 
@@ -458,6 +494,10 @@ naming the cause.
 
 Token caps are **runaway guards, not design constraints** (`ai.rs`: 32k
 workers, 32k reasoning, 2k reply). Reply length is governed by the prompt.
+
+A caller may pass a tighter cap via `MaxTokens`. The observer uses 4k: its two
+documents are a few hundred tokens, so a pathological generation dies in ~10s
+instead of burning 32k over two minutes.
 
 ## Seeing it — no mock layer
 

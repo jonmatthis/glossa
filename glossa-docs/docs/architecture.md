@@ -178,9 +178,12 @@ before it ships.
 
 Defaults live in `settings.rs` (`default_model`, `default_observer_model`);
 the worker model is editable in Settings; the observer model is currently
-only editable by hand-editing `settings.json`. Every request payload sets
-`frequency_penalty: 0.3` — a mild guard against degenerate repetition loops
-("¡Hola¡Hola¡Hola…"), which otherwise burn minutes of wall time.
+only editable by hand-editing `settings.json`. **No `frequency_penalty`.** The doc claimed for a long time that every payload
+set `frequency_penalty: 0.3`; it set it nowhere, and adding it back returns
+`404: No endpoints found that can handle the requested parameters`, because
+`require_parameters: true` then filters out every provider serving the model.
+Repetition is handled where it actually happens — across turns — by the
+NEVER REPEAT YOURSELF rule in the reply prompt.
 
 ### Prompt composition
 

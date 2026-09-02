@@ -817,7 +817,16 @@ pub async fn guided_turn(
     } else {
         message.trim().to_string()
     };
-    let learner_tokens_task = {
+    // No learner message means nothing to tokenize. The greeting and a
+    // steering turn carry placeholders ("(session start)"), and asking a model
+    // to gloss and translate those produced `"translation": "not applicable"`
+    // — correct per the no-information rule, then rejected by the validator's
+    // non-empty check, costing a retry on EVERY such turn. Skip the call.
+    let has_learner_message = !greeting && steering.as_deref().is_none_or(|s| s.trim().is_empty());
+    let learner_tokens_task = if !has_learner_message {
+        None
+    } else {
+        Some({
         let provider = Provider::openrouter(&settings.openrouter_key, &settings.openrouter_model);
         let channel = on_event.clone();
         let learner_msgs = vec![
@@ -832,6 +841,7 @@ pub async fn guided_turn(
                     0.1,
                     "LearnerTokensOut",
                     false,
+                    None,
                     |t: &LearnerTokensOut| {
                         if t.tokens.is_empty() || t.translation.trim().is_empty() {
                             Some("tokens and translation must not be empty".into())
@@ -850,6 +860,7 @@ pub async fn guided_turn(
                 });
             }
             result
+        })
         })
     };
 
@@ -1047,6 +1058,7 @@ pub async fn guided_turn(
                         0.1,
                         "TokensOut",
                         false,
+                        None,
                         |t: &TokensOut| {
                             if t.tokens.is_empty() {
                                 Some("tokens must not be empty".into())
@@ -1086,6 +1098,7 @@ pub async fn guided_turn(
                         0.2,
                         "TranslationOut",
                         false,
+                        None,
                         |t: &TranslationOut| {
                             if t.translation.trim().is_empty() { Some("translation must not be empty".into()) } else { None }
                         },
@@ -1115,6 +1128,7 @@ pub async fn guided_turn(
                         0.4,
                         "MechanicsOut",
                         false,
+                        None,
                         |m: &MechanicsOut| {
                             if m.mechanics.is_empty() { Some("mechanics must not be empty - every reply teaches something".into()) } else { None }
                         },
@@ -1144,6 +1158,7 @@ pub async fn guided_turn(
                         0.6,
                         "ScaffoldsOut",
                         false,
+                        None,
                         |sc: &ScaffoldsOut| {
                             if sc.replies.is_empty()
                                 || sc.frames.is_empty()
@@ -1188,9 +1203,13 @@ pub async fn guided_turn(
             scaffolds_task
                 .await
                 .unwrap_or_else(|e| Err(format!("scaffolds task panicked: {e}"))),
-            learner_tokens_task
-                .await
-                .unwrap_or_else(|e| Err(format!("user tokens task panicked: {e}"))),
+            match learner_tokens_task {
+                Some(t) => t
+                    .await
+                    .unwrap_or_else(|e| Err(format!("user tokens task panicked: {e}"))),
+                // Not an error: this turn had no learner message.
+                None => Ok(LearnerTokensOut { tokens: Vec::new(), translation: String::new() }),
+            },
         );
 
         // Per-section degradation: a failed sub-call costs its section only.
@@ -1336,6 +1355,7 @@ pub async fn guided_turn(
                     0.3,
                     "CoachFeedback",
                     false,
+                    None,
                     CoachFeedback::validate,
                 )
                 .await;
@@ -1596,6 +1616,7 @@ pub async fn generate_scaffolds(
             0.6,
             "ScaffoldsOut",
             false,
+            None,
             |sc: &ScaffoldsOut| {
                 if sc.replies.is_empty() || sc.frames.is_empty() || sc.starters.is_empty() {
                     Some("all three scaffold lists must be populated".into())
@@ -1667,6 +1688,7 @@ pub async fn word_insight(
             0.2,
             "WordInsight",
             false,
+            None,
             |w: &WordInsight| {
                 if w.lemma.trim().is_empty() || w.usage.trim().is_empty() {
                     Some("lemma and usage must be filled".into())
@@ -1772,7 +1794,8 @@ pub async fn generate_story(
             0.7,
             "StoryResponse",
             false, // workers never think
-            |st| st.validate(),
+            None,
+            |st: &StoryResponse| st.validate(),
         )
         .await
         .inspect(|story| {

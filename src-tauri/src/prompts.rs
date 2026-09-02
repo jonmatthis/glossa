@@ -27,9 +27,9 @@ pub fn persona_block(
                  with {tlname}. Build every exchange from a tiny survival core, \
                  taught by modeling: greetings (hello, goodbye, thank you, \
                  please), counting 1-10, yes/no, my name is..., I am from... \
-                 Introduce AT MOST ONE new phrase per reply, repeat it across \
-                 several turns, and always model the answer to your own \
-                 question first. Keep every sentence under six words where \
+                 Introduce AT MOST ONE new phrase per reply and recycle earlier \
+                 phrases inside NEW sentences: recycling a word is required, \
+                 resending the same sentence is forbidden. Keep sentences short where \
                  possible. The learner should never need to guess.",
                 tlname = target_language_name
             )
@@ -56,6 +56,37 @@ pub fn always_respond_rule(target_language_name: &str) -> String {
     )
 }
 
+/// The sentinel a model writes into a REQUIRED text field it has nothing to
+/// say for. The UI renders it as empty — see `lib/normalize.ts`.
+pub const NOT_APPLICABLE: &str = "not applicable";
+
+/// How to say "nothing here" honestly.
+///
+/// Every schema this app sends is **strict**: every field is required, because
+/// a schema with optional fields gave the decoder enough freedom to run away
+/// mid-object (see `ai.rs::inline_defs`). Required must not mean *invented*,
+/// so every structured prompt carries this rule — one sanctioned answer per
+/// shape, instead of the model padding, guessing, or stalling.
+pub fn no_information_rule() -> String {
+    format!(
+        "- NOTHING TO SAY: every field is required, but NEVER invent content to \
+         fill one. When you genuinely have no information for a field, say so \
+         in the way its type allows:\n\
+         \x20 - a field that accepts null -> null\n\
+         \x20 - a list with nothing to put in it -> [] (an empty list is a valid, \
+         useful answer; do not pad it)\n\
+         \x20 - a required text field -> exactly \"{na}\"\n\
+         \x20 - a required number -> 0\n\
+         Guessing is worse than an empty answer: these fields steer later \
+         teaching, so a padded list actively misleads.\n\
+         NEVER use the sentinel for a field that copies or transforms text you          were given - a token's text, a translation of a message you can see, a          corrected phrase. Those always have a real answer, and a placeholder          there is rendered to the learner as if it were their language.
+         Where THIS prompt states an explicit requirement for a field - \
+         'exactly two', 'at least one' - that requirement WINS over the \
+         empty-answer option above.",
+        na = NOT_APPLICABLE,
+    )
+}
+
 pub fn no_emoji_rule() -> &'static str {
     "- NEVER use emojis, emoticons, or any Unicode pictographic symbols in your responses. They are strictly forbidden because responses may be read aloud by a text-to-speech engine and emoticons produce unnatural noise (e.g. \"face with tears of joy\"). Plain text only."
 }
@@ -79,12 +110,15 @@ pub fn guided_reply_prompt(
          - LENGTH: One to three short sentences.\n\
          - SHELTERING: Use mostly high-frequency vocabulary the student already likely knows, plus at most one or two new words per reply (comprehensible input, i+1). Introduce new grammar gently and recycle earlier structures.\n\
          - RECASTS: If the student's message contains a small mistake, model the correct form naturally in your reply (recast). Never explicitly say \"that was wrong\".\n\
+         - YOU ARE NOT A TEACHER: you are a native speaker having a friendly conversation. NEVER explain grammar, NEVER give language advice, NEVER translate, NEVER comment on how the learner writes, and NEVER point out a mistake. Someone else does all of that, privately, and you must not know about it. If the learner asks a language question, answer it the way a friendly native speaker would in one short natural sentence and carry on with the conversation - no lesson, no breakdown, no lists.\n\
+         - NEVER REPEAT YOURSELF: your own previous replies are in the conversation above. Do NOT send a sentence you have already sent. Do not re-introduce yourself, re-state your name, or re-ask a question you have already asked. If the learner did not answer, do NOT ask the same way again - acknowledge briefly, then rephrase far more simply, offer a two-way choice, or MODEL the answer yourself and move on. Every reply must take the conversation somewhere it has not already been.\n\
          - CONTINUITY: Every reply must give the learner something to respond to — a question, a choice, an opinion to agree or disagree with, or a detail they can react to. Never close the conversation with a bare statement of fact or a one-word answer. If you acknowledge what they said, add one new element (a related detail, a follow-up, a gentle challenge) that invites their next turn. Dead-end replies (\"Sí.\", \"De acuerdo.\") are forbidden unless the learner explicitly asked for yes/no confirmation.\n\
          {emoji}\n\n\
+         PRIVATE STAGING NOTES - the learner never sees these and you must never mention, quote, read out, or act them out. They are hints about what to steer toward. Any correction listed below is applied INVISIBLY: you simply use the correct form yourself in your own sentence and say nothing about it. Never announce what you are practising.\n\n\
          {directives}\n\n\
          Respond with the conversational reply text and nothing else.",
-        persona = persona_block("language tutor", target_language_name, cefr_level, native_language_name),
-        rules = mandatory_rules(target_language_name, "language tutor"),
+        persona = persona_block("conversation partner", target_language_name, cefr_level, native_language_name),
+        rules = mandatory_rules(target_language_name, "conversation partner"),
         always = always_respond_rule(target_language_name),
         tln = target_language_name,
         emoji = no_emoji_rule(),
@@ -107,10 +141,12 @@ pub fn guided_tokens_prompt(
          tokens as notable — forms a learner should notice (inflections,\n\
          constructions, word order). Copy each token's text EXACTLY from the\n\
          reply and never skip words.{roman}\n\
+         {nothing}\n\
          Respond with the structured tokenization you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
         roman = romanization_line(romanization_scheme),
+        nothing = no_information_rule(),
     )
 }
 
@@ -133,9 +169,11 @@ pub fn guided_translation_prompt(
 ) -> String {
     format!(
         "Translate the given {tln} tutor reply into natural {native}.\n\
+         {nothing}\n\
          Respond with the structured translation you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
+        nothing = no_information_rule(),
     )
 }
 
@@ -161,12 +199,14 @@ pub fn guided_mechanics_prompt(
          — never return zero cards. Never repeat a mechanic from the ALREADY\n\
          TAUGHT list.\n\
          {directives}\n\
+         {nothing}\n\
          Respond with the structured cards you have been configured to produce.",
         tln = target_language_name,
         cefr = cefr_level,
         native = native_language_name,
         contrast_with = contrast_language(native_language_name),
         directives = directives,
+        nothing = no_information_rule(),
     )
 }
 
@@ -193,10 +233,12 @@ pub fn guided_scaffolds_prompt(
           The learner's native language is {native}, but every scaffold stays in {tln}.\n\
           Use the session focus structures where natural.\n\
           {directives}\n\
+         {nothing}\n\
          Respond with the structured scaffolds you have been configured to produce.",
          tln = target_language_name,
          native = native_language_name,
          directives = directives,
+         nothing = no_information_rule(),
      )
  }
 
@@ -242,12 +284,14 @@ pub fn story_prompt(
          - TONE: warm, concrete, and human. No titles inside the text, no moralizing, no emoji.\n\
          - GLOSSES: tokenize the story word by word and give every content word a short\n  {native} gloss in context. Function words (articles, prepositions, pronouns) may\n  carry glosses too; punctuation-only tokens have a null gloss. Keep glosses to one\n  or two words where possible.\n\
          {overlay}\n\n\
+         {nothing}\n\
          Respond with the structured story you have been configured to produce.",
         tln = target_language_name,
         cefr = cefr_level,
         native = native_language_name,
         length = band.2,
         overlay = overlay_section,
+        nothing = no_information_rule(),
     )
 }
 
@@ -331,10 +375,12 @@ pub fn learner_tokens_prompt(
             for their mistakes. Mark at most 3 tokens as notable.{roman}\n\
          2. translation: a natural {native} translation of what the learner\n\
             actually communicated (not a word-for-word rendering).\n\n\
+         {nothing}\n\
          Respond with the structured analysis you have been configured to produce.",
         tln = target_language_name,
         native = native_language_name,
         roman = romanization_line(romanization_scheme),
+        nothing = no_information_rule(),
     )
 }
 

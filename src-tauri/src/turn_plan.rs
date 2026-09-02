@@ -85,7 +85,9 @@ pub const TURN_STEPS: &[Step] = &[
         hydrates: true,
         joins: true,
         background: false,
-        condition: None,
+        condition: Some(
+            "skipped when there is no learner message - the greeting and a settings change have nothing of yours to analyse",
+        ),
     },
     Step {
         op: op::TOKENIZE,

@@ -110,7 +110,10 @@ body {
 }
 .msg.pending { opacity: 0.6; font-style: italic; }
 .msg.bot { position: relative; }
-.msg.bot.with-speak { padding-right: 34px; }
+.msg.bot.with-speak { padding-right: 42px; }
+/* RTL text starts at the right edge, so the reserve has to move with it. */
+.msg.bot.rtl.with-speak { padding-right: 13px; padding-left: 42px; }
+.msg.bot.rtl .speak-btn { right: auto; left: 5px; }
 .speak-btn {
   position: absolute; top: 4px; right: 5px; border: 1px solid var(--paper-line);
   background: #fff; border-radius: 8px;
@@ -136,7 +139,7 @@ body {
 }
 
 /* Composer */
-.composer { background: var(--paper2); padding: 4px 12px 11px; flex: none; }
+.composer { background: var(--paper2); padding: 4px 12px 11px; flex: 0 0 auto; min-height: 0; }
 .scaf {
   flex: none; font-family: var(--serif); font-size: 13.5px; color: var(--ink);
   background: #fff; border: 1px solid var(--paper-line); border-radius: 18px;
@@ -161,7 +164,10 @@ body {
   overflow: hidden;
 }
 /* Suggestion block (steer-driven scaffolds) — visually distinct from the input */
-.scaffold-block { border-top: 1px solid #d8d3c4; background: #e9e5d8; }
+.scaffold-block {
+  border-top: 1px solid #d8d3c4; background: #e9e5d8;
+  flex: none; min-height: 0;
+}
 .scaffold-block-head {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 12px 3px;
@@ -175,11 +181,20 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .scaffold-toggle {
-  border: none; background: none; color: var(--ink-mut);
-  cursor: pointer; font-size: 10px; padding: 1px 5px;
+  border: 1px solid var(--paper-line); background: #fff; border-radius: 8px;
+  color: var(--ink-mut); cursor: pointer; font-size: 13px;
+  padding: 3px 12px; line-height: 1.1; flex: none;
+  min-width: 44px; min-height: 26px;
 }
+.scaffold-toggle:hover { border-color: var(--amber-deep); color: var(--ink); }
 .scaffold-toggle:hover { color: var(--ink-d); }
-.scaffold-groups { display: flex; flex-direction: column; gap: 5px; padding: 2px 12px 8px; }
+/* Bounded so a long chat and a full suggestion set cannot fight over the
+   column: suggestions scroll inside their own box rather than pushing the
+   composer around or being crushed by the stream. */
+.scaffold-groups {
+  display: flex; flex-direction: column; gap: 5px; padding: 2px 12px 8px;
+  max-height: 32vh; overflow-y: auto; overscroll-behavior: contain;
+}
 .scaffold-row { display: flex; align-items: center; gap: 8px; }
 .scaffold-label {
   font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
@@ -209,6 +224,11 @@ body {
    rightmost. */
 .line.rtl-line { flex-direction: row-reverse; }
 .line.rtl-line .wu { direction: rtl; }
+/* Arabic (and other RTL scripts) sit visually smaller than Latin at the same
+   px size — x-height and stroke weight differ. Scale up for legibility. */
+.msg.rtl .w, .line.rtl-line .w { font-size: 1.2em; line-height: 1.7; }
+.msg.rtl .wg, .line.rtl-line .wg { font-size: 11px; }
+.msg.rtl .wroman, .line.rtl-line .wroman { font-size: 11px; }
 .msg.me.rtl { align-self: flex-end; }
 .msg.bot.rtl .line { flex-direction: row-reverse; }
 .msg.bot.rtl .line .wu { direction: rtl; }
@@ -937,6 +957,33 @@ body {
 }
 .graph-fidelity.ok { color: var(--faint-d); }
 .graph-fidelity.bad { color: #e06c6c; background: rgba(224, 108, 108, 0.08); }
+
+/* Quick toggles: a second VIEW of the Settings record, not a copy of it. */
+.quick-toggles {
+  display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 2px;
+  border-top: 1px dashed #d8d3c4; margin-top: 2px;
+}
+.quick-toggle {
+  border: 1px solid var(--paper-line); background: #fff; border-radius: 14px;
+  color: var(--ink-mut); cursor: pointer; padding: 3px 10px;
+  font-family: var(--mono); font-size: 10px; white-space: nowrap;
+}
+.quick-toggle:hover:not(:disabled) { border-color: var(--amber-deep); color: var(--ink); }
+.quick-toggle.on { color: var(--ink); border-color: var(--amber-deep); background: #fffcf2; }
+.quick-toggle:disabled { opacity: 0.45; cursor: default; }
+
+/* Collapsible coach thread. */
+.coach-thread-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px 4px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--faint-d);
+}
+.coach-thread-head button {
+  margin-left: auto; background: none; border: none; color: var(--mut-d);
+  cursor: pointer; font-size: 11px; padding: 0 4px;
+}
+.coach-thread-head button:hover { color: var(--ink-d); }
 
 /* Settings modal */
 .modal-backdrop {

@@ -41,6 +41,13 @@ const REPLY_MAX_TOKENS: u64 = 2_000;
 const WORKER_MAX_TOKENS: u64 = 32_000;
 const REASONING_MAX_TOKENS: u64 = 32_000;
 
+/// A caller may pass its own, tighter cap. The point is not to constrain the
+/// output — it is to make a runaway CHEAP. The observer's documents are a few
+/// hundred tokens; giving it 4k means a pathological generation dies in ~10s
+/// instead of burning 32k tokens over two minutes before anyone notices.
+#[derive(Debug, Clone, Copy)]
+pub struct MaxTokens(pub u64);
+
 pub static PARSE_RETRY: AtomicU64 = AtomicU64::new(0);
 pub static VALIDATION_RETRY: AtomicU64 = AtomicU64::new(0);
 pub static HTTP_429_RETRY: AtomicU64 = AtomicU64::new(0);
@@ -62,6 +69,14 @@ const UNSUPPORTED_KEYWORDS: &[&str] = &[
     "exclusiveMinimum",
     "exclusiveMaximum",
     "multipleOf",
+    // Cardinality is not in the strict subset either. It moves to the
+    // `validate` closures, which already check non-emptiness and trigger a
+    // corrective retry — enforcement relocates, it does not disappear.
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
 ];
 
 /// Normalize a schemars schema into something every grammar-constrained
@@ -89,6 +104,20 @@ const UNSUPPORTED_KEYWORDS: &[&str] = &[
 ///    roughly one run in three, non-deterministically. Stripping them leaves
 ///    the shape (types, properties, required, items, enums, descriptions):
 ///    everything that constrains, nothing that confuses.
+/// 4. **Make every object strict.** `additionalProperties: false`, and every
+///    property listed in `required`. This is the one that matters most.
+///    schemars omits any `#[serde(default)]` field from `required`, so
+///    `TeachingPlan` — where all eight fields are defaulted — shipped with
+///    NO required array at all: a schema meaning "an object that may contain
+///    any of these properties, or none". Nothing in that grammar obliges the
+///    model to close the object or stop emitting, which is exactly why the
+///    observer ran away on ~1 call in 4 while the fully-required worker
+///    schemas never failed once.
+///
+///    `Option<T>` already arrives as `["string", "null"]`, so requiring it
+///    costs nothing: the model answers `null`. Prompts carry a matching rule
+///    (`prompts::no_information_rule`) telling it how to say "nothing here"
+///    for each shape, so required never means invented.
 pub fn inline_defs(mut schema: Value) -> Value {
     let defs = schema
         .get("$defs")
@@ -118,6 +147,13 @@ pub fn inline_defs(mut schema: Value) -> Value {
                 map.remove("definitions");
                 for noise in UNSUPPORTED_KEYWORDS {
                     map.remove(*noise);
+                }
+                // Strict subset: closed objects, every property required.
+                if let Some(props) = map.get("properties").and_then(|p| p.as_object()) {
+                    let all: Vec<Value> =
+                        props.keys().map(|k| Value::String(k.clone())).collect();
+                    map.insert("required".into(), Value::Array(all));
+                    map.insert("additionalProperties".into(), Value::Bool(false));
                 }
                 for (_, value) in map.iter_mut() {
                     walk(value, defs);
@@ -248,6 +284,17 @@ impl Provider {
             // Length is governed by the PROMPT ("one to three short
             // sentences"); this is only a runaway guard.
             "max_tokens": REPLY_MAX_TOKENS,
+            // NOTE: do NOT add `frequency_penalty` here. The architecture doc
+            // long claimed it was set "on every request payload"; it was set
+            // nowhere, and adding it back produces
+            //   404: No endpoints found that can handle the requested parameters
+            // because `require_parameters: true` then filters out every
+            // provider serving this model. It was presumably removed for
+            // exactly that reason and the doc was never corrected.
+            //
+            // Repetition is handled where it actually occurs — across turns,
+            // not within one completion — by the NEVER REPEAT YOURSELF rule in
+            // `prompts::guided_reply_prompt`.
             "reasoning": reasoning_off(&self.model),
             // Route ONLY to providers that actually honor request parameters
             // (json_schema, reasoning, ...). Without this, OpenRouter
@@ -468,6 +515,7 @@ impl Provider {
     /// corrective one for transient model-output defects (malformed JSON,
     /// failed validation) — the raw output plus the error go back to the
     /// model, same category as a 429 retry.
+    #[allow(clippy::too_many_arguments)]
     pub async fn structured_validated<T, F>(
         &self,
         ctx: RunContext,
@@ -475,20 +523,20 @@ impl Provider {
         temperature: f64,
         name: &str,
         allow_reasoning: bool,
+        max_tokens: Option<MaxTokens>,
         validate: F,
     ) -> Result<T, String>
     where
         T: DeserializeOwned + JsonSchema,
         F: Fn(&T) -> Option<String>,
     {
+        let cap = max_tokens.map(|m| m.0).unwrap_or(if allow_reasoning {
+            REASONING_MAX_TOKENS
+        } else {
+            WORKER_MAX_TOKENS
+        });
         let mut run = RunRecorder::start(ctx, &self.model);
-        run.profile(
-            Some(temperature),
-            allow_reasoning,
-            Some(if allow_reasoning { REASONING_MAX_TOKENS } else { WORKER_MAX_TOKENS }),
-            false,
-            Some(name),
-        );
+        run.profile(Some(temperature), allow_reasoning, Some(cap), false, Some(name));
         let root = match serde_json::to_value(schemars::schema_for!(T)) {
             Ok(v) => v,
             Err(e) => {
@@ -515,11 +563,11 @@ impl Provider {
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
-                    "max_tokens": REASONING_MAX_TOKENS,
+                    "max_tokens": cap,
                                         "provider": {"require_parameters": true},
                     "response_format": {
                         "type": "json_schema",
-                        "json_schema": {"name": name, "schema": schema}
+                        "json_schema": {"name": name, "strict": true, "schema": schema}
                     },
                 })
             } else {
@@ -527,12 +575,12 @@ impl Provider {
                     "model": self.model,
                     "messages": attempts,
                     "temperature": temperature,
-                    "max_tokens": WORKER_MAX_TOKENS,
+                    "max_tokens": cap,
                     "reasoning": reasoning_off(&self.model),
                     "provider": {"require_parameters": true},
                     "response_format": {
                         "type": "json_schema",
-                        "json_schema": {"name": name, "schema": schema}
+                        "json_schema": {"name": name, "strict": true, "schema": schema}
                     },
                 })
             };
@@ -736,6 +784,65 @@ fn inline_defs_strips_keywords_that_make_decoders_run_away() {
     assert_eq!(b["type"], "integer");
     assert_eq!(b["description"], "kept");
     assert_eq!(out["required"][0], "budget");
+}
+
+#[test]
+fn inline_defs_makes_every_object_strict() {
+    // The bug this exists to prevent: schemars omits `#[serde(default)]`
+    // fields from `required`, so TeachingPlan shipped with NO required array
+    // — "an object that may contain any of these, or none". Nothing obliged
+    // the model to stop emitting, and it ran away on ~1 call in 4.
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "focus": {"type": "array", "items": {"type": "string"}},
+            "note": {"type": ["string", "null"]},
+            "budget": {"type": "integer"}
+        }
+    });
+    let out = inline_defs(schema);
+    let mut required: Vec<&str> =
+        out["required"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    required.sort_unstable();
+    assert_eq!(required, ["budget", "focus", "note"]);
+    assert_eq!(out["additionalProperties"], false);
+    // Nullable stays nullable — requiring it just means the model must answer,
+    // and `null` is a legal answer.
+    assert_eq!(out["properties"]["note"]["type"][1], "null");
+}
+
+#[test]
+fn inline_defs_makes_nested_objects_strict_too() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "errors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"said": {"type": "string"}, "seen": {"type": "integer"}}
+                }
+            }
+        }
+    });
+    let out = inline_defs(schema);
+    let item = &out["properties"]["errors"]["items"];
+    assert_eq!(item["additionalProperties"], false);
+    assert_eq!(item["required"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn inline_defs_strips_cardinality_which_moves_to_the_validators() {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "xs": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 4}
+        }
+    });
+    let out = inline_defs(schema);
+    let xs = &out["properties"]["xs"];
+    assert!(xs.get("minItems").is_none());
+    assert!(xs.get("maxItems").is_none());
 }
 
 #[test]

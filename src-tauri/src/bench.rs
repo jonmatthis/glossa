@@ -135,6 +135,7 @@ async fn model_bench() {
                 0.1,
                 "TokensOut",
                 false,
+                None,
                 |t: &TokensOut| {
                     if t.tokens.is_empty() { Some("empty".into()) } else { None }
                 },
@@ -160,6 +161,7 @@ async fn model_bench() {
                 0.6,
                 "ScaffoldsOut",
                 false,
+                None,
                 |sc: &ScaffoldsOut| {
                     if sc.replies.is_empty() || sc.frames.is_empty() || sc.starters.is_empty() {
                         Some("empty lists".into())
@@ -189,6 +191,7 @@ async fn model_bench() {
                 0.2,
                 "TranslationOut",
                 false,
+                None,
                 |t: &TranslationOut| {
                     if t.translation.trim().is_empty() { Some("empty".into()) } else { None }
                 },
@@ -214,6 +217,7 @@ async fn model_bench() {
                 0.4,
                 "MechanicsOut",
                 false,
+                None,
                 |m: &MechanicsOut| {
                     if m.mechanics.is_empty() { Some("empty".into()) } else { None }
                 },
@@ -240,6 +244,7 @@ async fn model_bench() {
                 0.7,
                 "StoryResponse",
                 false,
+                None,
                 |st: &StoryResponse| {
                     let glossed = st
                         .paragraphs
@@ -276,6 +281,7 @@ Si, me gusta mucho viajar. Quiero ir a la playa con mi familia el proximo verano
                 0.1,
                 "LearnerTokensOut",
                 false,
+                None,
                 |t: &LearnerTokensOut| {
                     if t.tokens.is_empty() { Some("empty".into()) } else { None }
                 },
@@ -302,6 +308,7 @@ Si, me gusta mucho viajar. Quiero ir a la playa con mi familia el proximo verano
                 0.3,
                 "CoachFeedback",
                 false,
+                None,
                 |c: &CoachFeedback| c.validate(),
             )
             .await;

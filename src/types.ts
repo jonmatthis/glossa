@@ -17,6 +17,7 @@ export interface Settings {
   auto_speak: boolean
   auto_send: boolean
   always_romanize: boolean
+  auto_translate: boolean
   tts_engine: string
   tts_voice: string
   shortcuts: Shortcuts
